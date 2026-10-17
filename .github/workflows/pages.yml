@@ -1,0 +1,48 @@
+# Publish the page to GitHub Pages (Settings → Pages → Source: GitHub Actions).
+# The site is built on your machine, not here: the runner has none of the chart's fonts, so
+# run `python guide.py build --strict` and commit dist/ before pushing. This job only lays the
+# built files out flat, with the page at the root and the posters beside it:
+#   dist/web/index.html and its icons and preview  →  /
+#   dist/poster.*                                  →  /poster.*
+#   dist/panels/                                   →  /panels/
+# artifact.html stays out: it only works when published as a Claude artifact.
+name: pages
+on:
+  push:
+    branches: [main]
+    paths: ["dist/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lay out the site
+        run: |
+          mkdir -p _site
+          cp dist/web/index.html dist/web/favicon.ico dist/web/apple-touch-icon.png \
+             dist/web/icon.svg dist/web/preview.png _site/
+          cp dist/neural-network-field-guide.* dist/neural-network-field-guide-dark.png _site/
+          cp -r dist/panels _site/
+          # the page links the posters one folder up (../neural-network-field-guide.pdf);
+          # here they sit beside it
+          sed -i 's#"\.\./neural-network-field-guide#"neural-network-field-guide#g' _site/index.html
+          if grep -q '"\.\./' _site/index.html; then
+            echo "index.html still links outside the site:"; grep -o '"\.\./[^"]*"' _site/index.html; exit 1
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

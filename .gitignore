@@ -1,0 +1,7 @@
+# Python
+__pycache__/
+*.pyc
+# macOS
+.DS_Store
+# proofs: a local working folder for revision.py, proposals.py and palettes.py
+/proofs/

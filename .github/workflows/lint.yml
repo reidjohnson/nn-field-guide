@@ -1,0 +1,15 @@
+# Lint the chart on every push and pull request: the same checks as `python guide.py lint`.
+# The runner has no Poppins, Lato, or Noto Sans Mono, so lint skips the text-width checks
+# there (and says so); run lint locally with the fonts installed before a release.
+name: lint
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml pillow
+      - run: python guide.py lint

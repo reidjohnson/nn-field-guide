@@ -1,0 +1,1017 @@
+# Every architecture in the field guide: what to draw, plus its metadata.
+#
+# Diagram rows are listed bottom to top. Each row is a group of cells:
+#   cell     cell type, or a list with one type per position
+#   n        number of cells (inferred from a list)
+#   connect  rule linking this row to the previous one (or to `from`):
+#            full | causal | one | near:k | pairs (with `pairs: [[src, dst], ...]`)
+#   style    link style for that rule (link, frozen, cross, gate, state, loop, skip, func)
+#   chain    right | left | double: state arrows between neighbours in the row
+#   gate     true: dotted gate from the row below to a dot on each state arrow;
+#            recurrent: also from the previous state cell, hooked onto the dot from above
+#   dim      indices drawn faded (inactive or low weight); edges touching them fade too
+#   level / y / xs / ys / pitch / ring: placement overrides (normally automatic)
+#   marks    false: leave this row's cells without their group mark (e.g. a picture's patches)
+# Panel-level extras: links (extra rules between any rows), arcs (skip connections) and
+# loops (return arrows, style `loop`), both elbows beside the layers with `side` and optional
+# `reach` (an arc between two whole rows of the same size is drawn once per column), arrows (straight, in the state arrow's style unless given: from a cell [group, i]
+# or a whole group id to a cell), levels (number of rows on the vertical grid),
+# span ([bottom y, top y]).
+# Every line is drawn at one weight and stops the same distance from what it meets.
+# An architecture may carry a `note`: one sentence printed as a footnote on the poster and
+# under the caption on the page, with a superscript marker after the caption.
+
+title: Neural Network Field Guide
+web_title: Neural Network Field Guide
+subtitle: "{count} architectures and training schemes, from {first} ({first_year}) to {last} ({last_year})."  # filled in from the panels: the count, the oldest and the newest
+reading: "Each diagram draws a network in miniature, from input at the bottom to output at the top. In most panels, a circle is one neuron; in sequence models, where each column is a token, it is that token's whole vector at one layer. A square is larger: an image patch, an expert network, a matrix-valued state. A cell's color and mark both show its role, so the diagrams read with or without color. Faded cells and links take little or no part in the step shown. Links show which tokens can read which. Wherever a part repeats, across positions, windows, copies, or passes, it uses the same weights. Each panel gives a year and the objective or learning rule of its original paper; many can be trained other ways."
+credit: Inspired by The Neural Network Zoo by Fjodor van Veen and Stefan Leijnen (Asimov Institute, 2016; updated 2019).
+credit_link: {text: The Neural Network Zoo, url: "https://www.asimovinstitute.org/neural-network-zoo/"}
+copyright: © 2026 Reid Johnson
+license: {text: CC BY-SA 4.0, url: "https://creativecommons.org/licenses/by-sa/4.0/"}  # the chart's license, printed after the copyright; the code is MIT
+repo: {text: github.com/reidjohnson/nn-field-guide, url: "https://github.com/reidjohnson/nn-field-guide"}  # in the posters' notice before the date; the page links it by the theme button and in its footer
+site: {url: "https://reidjohnson.github.io/nn-field-guide/"}  # where GitHub Pages serves the page; its link preview needs the full address
+
+# Families run in the order they began (1958, 1982, 1988, 1990, 2017, 2020), so the sequence
+# models read as one story. Two short families share the row between the generative and
+# recurrent ones: similarity (1988, two panels) and flows and autoregressive models (2014,
+# four), which carry on the generative row above them. Seq2seq with attention closes the
+# recurrent row and leads into the attention row below it. Routing and graphs (2005) closes
+# the chart beside the linear-time models. Families share a row when they add up to six.
+# Within a family, models run by year.
+sections:
+  - {id: feedforward, title: Feed-forward and convolutional, panels: [perceptron, mlp, cnn, resnet, unet, kan]}
+  - {id: energy, title: Energy-based and self-organizing, panels: [hopfield, som, boltzmann, rbm, dbn, modern_hopfield]}
+  - {id: generative, title: Autoencoders and generative, panels: [autoencoder, sparse_ae, denoising_ae, vae, gan, diffusion]}
+  - {id: similarity, title: Similarity, panels: [rbf, siamese]}
+  - {id: flows, title: Flows and autoregressive models, panels: [normalizing_flow, wavenet, neural_ode, flow_matching]}
+  - {id: recurrent, title: Recurrent and memory, panels: [rnn, lstm, birnn, gru, rnn_attention, ntm]}
+  - {id: attention, title: Attention, panels: [transformer, bert, gpt, vit, clip, diffusion_llm]}
+  - {id: lineartime, title: Linear-time sequence models, panels: [linear_attention, mamba, mamba_hybrid]}
+  - {id: routing, title: Routing and graphs, panels: [gnn, moe, capsnet]}
+
+architectures:
+
+  # ---------------------------------------------------------------- feed-forward
+  perceptron:
+    name: Perceptron
+    in_text: the perceptron   # how the subtitle names it, as the oldest panel
+    year: 1958
+    caption: Weighted sum, then a threshold
+    objective: supervised
+    summary: >-
+      A single layer of weights feeding one threshold unit. It learns a straight-line
+      boundary between two classes, which is why on its own it can't solve XOR.
+    papers:
+      - {cite: Rosenblatt 1958, title: "The perceptron: a probabilistic model for information storage and organization in the brain", url: "https://doi.org/10.1037/h0042519"}
+    diagram:
+      span: [130, 50]
+      rows:
+        - {cell: input, n: 3}
+        - {cell: output, n: 1, connect: full}
+
+  mlp:
+    name: MLP
+    full: Multilayer perceptron, deep feed-forward network
+    year: 1986
+    caption: Stacked dense layers
+    objective: supervised
+    summary: >-
+      Dense layers with nonlinear activations, trained end to end by backpropagation.
+      It is still the workhorse inside larger models: every Transformer block
+      contains one.
+    papers:
+      - {cite: "Rumelhart, Hinton & Williams 1986", title: "Learning representations by back-propagating errors", url: "https://doi.org/10.1038/323533a0"}
+    diagram:
+      rows:
+        - {cell: input, n: 3}
+        - {cell: hidden, n: 4, connect: full}
+        - {cell: hidden, n: 4, connect: full}
+        - {cell: output, n: 2, connect: full}
+
+  cnn:
+    name: CNN
+    full: Convolutional neural network
+    year: 1989
+    caption: Local filters, shared weights
+    objective: supervised
+    summary: >-
+      Each unit looks at a small window of the layer below, and the same filter weights
+      are reused at every position. The feature maps shrink layer by layer, and a dense
+      head makes the prediction.
+    read: >-
+      Ringed pink cells are convolution or pooling units, each reading only a small window of
+      the layer below. Every window uses the same filter: like any part drawn repeated, its
+      copies share their weights.
+    papers:
+      - {cite: LeCun et al. 1989, title: "Backpropagation applied to handwritten zip code recognition", url: "https://doi.org/10.1162/neco.1989.1.4.541"}
+    diagram:
+      rows:
+        - {cell: input, n: 6, pitch: 32}
+        - {cell: conv, n: 5, pitch: 32, connect: "near:2"}
+        - {cell: conv, n: 4, pitch: 32, connect: "near:2"}
+        - {cell: output, n: 2, connect: full}
+
+  resnet:
+    name: ResNet
+    full: Deep residual network
+    year: 2015
+    caption: Blocks add to a skip path
+    objective: supervised
+    summary: >-
+      Each block adds its output to an identity shortcut, so the block only has to learn
+      a correction. That made networks with more than a hundred layers trainable, and the
+      same residual stream runs through every Transformer.
+    read: >-
+      Each curved line carries a block's input past two layers and adds it to their output.
+      There is one per unit, because the whole layer is added unit for unit: two blocks, then
+      the head. Drawn with dense layers; the original blocks were
+      convolutional, and the same skip now runs through dense and attention layers alike.
+    papers:
+      - {cite: He et al. 2015, title: "Deep residual learning for image recognition", url: "https://arxiv.org/abs/1512.03385"}
+    diagram:
+      rows:
+        - {id: x, cell: input, n: 3}
+        - {id: h1, cell: hidden, n: 3, connect: full}
+        - {id: h2, cell: hidden, n: 3, connect: full}
+        - {id: h3, cell: hidden, n: 3, connect: full}
+        - {id: h4, cell: hidden, n: 3, connect: full}
+        - {id: y, cell: output, n: 3, connect: full}
+      arcs:
+        - {from: x, to: h2, side: right}
+        - {from: h2, to: h4, side: right}
+
+  unet:
+    name: U-Net
+    year: 2015
+    caption: Shrink, expand, skip across
+    objective: supervised
+    summary: >-
+      An encoder shrinks the image, a decoder grows it back, and skip connections hand
+      fine detail across at each scale. Built for biomedical segmentation, it became the
+      standard denoiser inside image diffusion models.
+    read: >-
+      Drawn upright, so the U becomes an hourglass. The curved lines are the skips across it,
+      one per position: each copies the whole encoder layer to the decoder layer of the same
+      size.
+    papers:
+      - {cite: "Ronneberger, Fischer & Brox 2015", title: "U-Net: Convolutional networks for biomedical image segmentation", url: "https://arxiv.org/abs/1505.04597"}
+    diagram:
+      rows:
+        - {id: x, cell: input, n: 6, pitch: 32}
+        - {id: e1, cell: conv, n: 4, connect: "near:2"}
+        - {id: b, cell: conv, n: 2, connect: full}
+        - {id: d1, cell: conv, n: 4, connect: full}
+        - {id: y, cell: output, n: 6, pitch: 32, connect: "near:1"}
+      arcs:
+        - {from: e1, to: d1, side: right}
+
+  kan:
+    name: KAN
+    full: Kolmogorov–Arnold network
+    year: 2024
+    caption: Learnable functions on edges
+    objective: supervised
+    summary: >-
+      Puts a learnable one-dimensional function on every edge and only sums at the nodes,
+      the reverse of an MLP's learned weights and fixed activations. Promising for small
+      scientific models; not yet proven at scale.
+    read: Wavy edges are learnable functions rather than single weights.
+    papers:
+      - {cite: Liu et al. 2024, title: "KAN: Kolmogorov–Arnold networks", url: "https://arxiv.org/abs/2404.19756"}
+    diagram:
+      rows:
+        - {cell: input, n: 2}
+        - {cell: hidden, n: 3, pitch: 48, connect: full, style: func}
+        - {cell: output, n: 1, connect: full, style: func}
+
+  # ---------------------------------------------------------------- recurrent
+  rnn:
+    name: RNN
+    full: Simple recurrent network
+    year: 1990
+    caption: Hidden state passed along
+    objective: next token
+    summary: >-
+      A hidden state is carried from one step to the next, so each output depends on
+      everything before it; Elman trained it to predict the next letter or word. Training
+      through many steps makes gradients vanish or explode.
+    read: >-
+      Columns are time steps. Each arrow is the hidden state handed to the same cell at the
+      next step: the network's connection to itself, unrolled.
+    papers:
+      - {cite: Elman 1990, title: "Finding structure in time", url: "https://doi.org/10.1207/s15516709cog1402_1"}
+    diagram:
+      rows:
+        - {cell: input, n: 4}
+        - {cell: recurrent, n: 4, connect: one, chain: right}
+        - {cell: output, n: 4, connect: one}
+
+  lstm:
+    name: LSTM
+    full: Long short-term memory
+    year: 1997
+    caption: Two states; forget gate from 2000
+    objective: supervised
+    summary: >-
+      Adds a cell state that runs alongside the hidden state, with input, forget, and
+      output gates deciding what to write, keep, and reveal; the forget gate was added in
+      2000. That protected memory lets gradients survive hundreds of steps. xLSTM (2024)
+      revived it with exponential gates and a matrix memory that trains in parallel.
+    read: >-
+      The double arrow is the pair of states (cell and hidden), each handed to the same cell
+      at the next step. The dot stands for the three gates, which act there and are set by
+      both the input below (the straight dotted line) and the previous step's state (the
+      hooked one).
+    papers:
+      - {cite: Hochreiter & Schmidhuber 1997, title: "Long short-term memory", url: "https://doi.org/10.1162/neco.1997.9.8.1735"}
+      - {cite: "Gers, Schmidhuber & Cummins 2000", title: "Learning to forget: Continual prediction with LSTM", url: "https://doi.org/10.1162/089976600300015015"}
+      - {cite: Beck et al. 2024, title: "xLSTM: Extended long short-term memory", url: "https://arxiv.org/abs/2405.04517"}
+    diagram:
+      rows:
+        - {cell: input, n: 4}
+        - {cell: memory, n: 4, connect: one, chain: double, gate: recurrent}
+        - {cell: output, n: 4, connect: one}
+
+  birnn:
+    name: Bidirectional RNN
+    year: 1997
+    caption: Reads the sequence both ways
+    objective: supervised
+    summary: >-
+      Runs one recurrent chain forward and another backward, then combines both at each
+      position, so every output sees the whole sequence. Standard for tagging and speech
+      recognition before Transformers.
+    papers:
+      - {cite: Schuster & Paliwal 1997, title: "Bidirectional recurrent neural networks", url: "https://doi.org/10.1109/78.650093"}
+    diagram:
+      levels: 4
+      rows:
+        - {id: x, cell: input, n: 4, level: 0}
+        - {id: f, cell: recurrent, n: 4, xs: [32, 72, 112, 152], level: 1, connect: one, from: x, chain: right}
+        - {id: b, cell: recurrent, n: 4, xs: [56, 96, 136, 176], level: 2, connect: one, from: x, chain: left}
+        - {id: y, cell: output, n: 4, level: 3, connect: one, from: f}
+      links:
+        - {from: b, to: y, rule: one}
+
+  gru:
+    name: GRU
+    full: Gated recurrent unit
+    year: 2014
+    caption: One state, two gates
+    objective: next token
+    summary: >-
+      Merges the LSTM's cell and hidden state into one, controlled by an update gate and
+      a reset gate. Introduced in an encoder–decoder for translation, it has fewer
+      parameters than the LSTM and usually similar accuracy.
+    read: >-
+      The arrow is the one state, handed to the same cell at the next step. The dot stands
+      for the two gates, set by both the input below (the straight dotted line) and the
+      previous step's state (the hooked one).
+    papers:
+      - {cite: Cho et al. 2014, title: "Learning phrase representations using RNN encoder–decoder for statistical machine translation", url: "https://arxiv.org/abs/1406.1078"}
+    diagram:
+      rows:
+        - {cell: input, n: 4}
+        - {cell: gated, n: 4, connect: one, chain: right, gate: recurrent}
+        - {cell: output, n: 4, connect: one}
+
+  rnn_attention:
+    name: Seq2seq with attention
+    full: RNN encoder–decoder with attention
+    year: 2014
+    caption: Learns to align and translate
+    objective: next token
+    summary: >-
+      A recurrent encoder reads the source and a recurrent decoder writes the target; at
+      each step the decoder compares its state with every encoder state and reads a weighted
+      mix of them. This is where attention began, in machine translation. Three years later
+      the Transformer kept the attention and dropped the recurrence.
+    read: >-
+      Left, the encoder; right, the decoder. Dashed lines are the attention: the decoder's
+      pink cells read all the encoder's states, weighted by how well each matches. The
+      original encoder ran in both directions; one is drawn.
+    papers:
+      - {cite: "Bahdanau, Cho & Bengio 2014", title: "Neural machine translation by jointly learning to align and translate", url: "https://arxiv.org/abs/1409.0473"}
+      - {cite: "Sutskever, Vinyals & Le 2014", title: "Sequence to sequence learning with neural networks", url: "https://arxiv.org/abs/1409.3215"}
+    diagram:   # the attention row sits high so its dashed lines clear the ringed state cells
+      levels: 4
+      rows:
+        - {id: ex, cell: input, n: 3, xs: [16, 62, 108], level: 0}
+        - {id: er, cell: recurrent, n: 3, xs: [16, 62, 108], y: 96, connect: one, from: ex, chain: right}
+        - {id: dx, cell: input, n: 2, xs: [140, 178], level: 0}
+        - {id: dr, cell: recurrent, n: 2, xs: [140, 178], y: 96, connect: one, from: dx, chain: right}
+        - {id: da, cell: attention, n: 2, xs: [140, 178], y: 48, connect: one, from: dr}
+        - {id: dy, cell: output, n: 2, xs: [140, 178], level: 3, connect: one, from: da}
+      links:
+        - {from: er, to: da, rule: full, style: cross}
+
+  ntm:
+    name: Neural Turing machine
+    year: 2014
+    caption: Controller reads, writes memory
+    objective: supervised
+    summary: >-
+      A recurrent controller reads from and writes to an external memory through soft,
+      differentiable addressing, an early form of attention. The differentiable neural
+      computer (2016) added memory allocation and links between writes.
+    read: The column on the right is the memory bank; dashed lines are the read and write heads.
+    papers:
+      - {cite: "Graves, Wayne & Danihelka 2014", title: "Neural Turing machines", url: "https://arxiv.org/abs/1410.5401"}
+      - {cite: Graves et al. 2016, title: "Hybrid computing using a neural network with dynamic external memory", url: "https://doi.org/10.1038/nature20101"}
+    diagram:
+      rows:
+        - {id: x, cell: input, n: 3, xs: [28, 60, 92], y: 130}
+        - {id: c, cell: recurrent, n: 2, xs: [44, 76], y: 72, connect: full, from: x}
+        - {id: y, cell: output, n: 3, xs: [28, 60, 92], y: 14, connect: full, from: c}
+        - {id: m, cell: memory, n: 4, xs: [176, 176, 176, 176], ys: [22, 58, 94, 130]}
+      links:
+        - {from: c, to: m, rule: pairs, pairs: [[1, 0], [1, 1], [1, 2], [1, 3]], style: cross}
+
+  # ---------------------------------------------------------------- energy-based
+  hopfield:
+    name: Hopfield network
+    year: 1982
+    caption: Settles into a stored pattern
+    objective: hebbian
+    summary: >-
+      Every unit connects to every other with symmetric weights set by a Hebbian rule.
+      Updating units lowers an energy function until the network settles into the nearest
+      stored pattern, so it works as an associative memory.
+    read: Each ringed yellow unit is both an input and an output.
+    papers:
+      - {cite: Hopfield 1982, title: "Neural networks and physical systems with emergent collective computational abilities", url: "https://doi.org/10.1073/pnas.79.8.2554"}
+    diagram:
+      rows:
+        - {id: u, cell: backfed, n: 6, ring: {cx: 104, cy: 72, r: 54}}
+      links:
+        - {from: u, to: u, rule: complete}
+
+  som:
+    name: Kohonen map
+    full: Self-organizing map
+    year: 1982
+    caption: Winner and neighbors move
+    objective: competitive
+    summary: >-
+      Each map unit holds a weight vector. For every input, the closest unit wins, and it
+      and its neighbors on the map move toward that input, so nearby units come to
+      represent similar inputs.
+    read: Drawn as a one-dimensional map. The red unit won and its neighbors move with it; the faded units are too far from it to move.
+    papers:
+      - {cite: Kohonen 1982, title: "Self-organized formation of topologically correct feature maps", url: "https://doi.org/10.1007/BF00337288"}
+    diagram:
+      span: [130, 34]
+      rows:
+        - {id: x, cell: input, n: 3}
+        - {id: m, cell: [hidden, hidden, output, hidden, hidden], connect: full, dim: [0, 4], dim_opacity: 0.38}
+      links:
+        - {from: m, to: m, rule: pairs, pairs: [[0, 1], [1, 2], [2, 3], [3, 4]]}
+
+  boltzmann:
+    name: Boltzmann machine
+    year: 1985
+    caption: Stochastic, fully connected
+    objective: energy
+    summary: >-
+      A Hopfield-style network with stochastic units, some of them hidden. Learning
+      compares correlations with the data clamped to those with the network running
+      freely. Slow, but it is the basis for restricted Boltzmann machines and deep
+      belief networks.
+    read: Ringed yellow units are visible; ringed green units are hidden and probabilistic.
+    papers:
+      - {cite: "Ackley, Hinton & Sejnowski 1985", title: "A learning algorithm for Boltzmann machines", url: "https://doi.org/10.1207/s15516709cog0901_7"}
+    diagram:
+      rows:
+        - {id: u, cell: [prob, prob, backfed, backfed, backfed, prob], ring: {cx: 104, cy: 72, r: 54}}
+      links:
+        - {from: u, to: u, rule: complete}
+
+  rbm:
+    name: RBM
+    full: Restricted Boltzmann machine
+    year: 1986
+    caption: No links within a layer
+    objective: energy
+    summary: >-
+      A Boltzmann machine with no links inside a layer, only between visible and hidden
+      units. That makes sampling fast, and contrastive divergence (2002) made training
+      practical.
+    papers:
+      - {cite: Smolensky 1986, title: "Information processing in dynamical systems: Foundations of harmony theory", url: "https://stanford.edu/~jlmcc/papers/PDP/Volume%201/Chap6_PDP86.pdf", source: "Parallel Distributed Processing, vol. 1"}
+      - {cite: Hinton 2002, title: "Training products of experts by minimizing contrastive divergence", url: "https://doi.org/10.1162/089976602760128018"}
+    diagram:
+      span: [130, 46]
+      rows:
+        - {cell: backfed, n: 4}
+        - {cell: prob, n: 3, connect: full}
+
+  dbn:
+    name: Deep belief network
+    year: 2006
+    caption: Stacked RBMs, trained greedily
+    objective: energy
+    summary: >-
+      A stack of RBMs trained one layer at a time, then fine-tuned as a whole. Its 2006
+      results helped restart deep learning, before better initialization and ReLUs made
+      the pretraining step unnecessary.
+    papers:
+      - {cite: "Hinton, Osindero & Teh 2006", title: "A fast learning algorithm for deep belief nets", url: "https://doi.org/10.1162/neco.2006.18.7.1527"}
+    diagram:
+      rows:
+        - {cell: backfed, n: 4}
+        - {cell: prob, n: 4, connect: full}
+        - {cell: prob, n: 4, connect: full}
+        - {cell: prob, n: 3, connect: full}
+
+  modern_hopfield:
+    name: Modern Hopfield network
+    year: 2020
+    caption: Attention as memory lookup
+    objective: energy
+    summary: >-
+      A continuous Hopfield network that stores exponentially many patterns and
+      retrieves one in a single update. That update turns out to be the softmax
+      attention used in Transformers.
+    read: Each middle cell is one stored pattern. The query at the bottom compares itself to all of them and reads back a weighted mix; the faded patterns get little weight.
+    papers:
+      - {cite: Ramsauer et al. 2020, title: "Hopfield networks is all you need", url: "https://arxiv.org/abs/2008.02217"}
+    diagram:
+      rows:
+        - {id: q, cell: input, n: 1}
+        - {id: p, cell: memory, n: 5, pitch: 38, connect: full, dim: [0, 2, 3, 4], dim_opacity: 0.4}
+        - {id: y, cell: output, n: 1, connect: full}
+
+  # ---------------------------------------------------------------- similarity
+  rbf:
+    name: Radial basis network
+    full: Radial basis function network
+    year: 1988
+    caption: Distance to stored centers
+    objective: supervised
+    summary: >-
+      Each hidden unit holds a center and fires in proportion to how close the input is to
+      it, a Gaussian bump; a linear layer reads the bumps out. The centers come from
+      clustering the data and the readout has a closed-form least-squares solution, so
+      training is fast. Kernel machines grew out of the same idea.
+    read: >-
+      Dashed links are comparisons: each hidden unit measures the input's distance to its
+      own center.
+    papers:
+      - {cite: Broomhead & Lowe 1988, title: "Multivariable functional interpolation and adaptive networks", url: "https://www.complex-systems.com/abstracts/v02_i03_a05/"}
+      - {cite: Moody & Darken 1989, title: "Fast learning in networks of locally-tuned processing units", url: "https://doi.org/10.1162/neco.1989.1.2.281"}
+    diagram:
+      rows:
+        - {cell: input, n: 3}
+        - {cell: hidden, n: 4, connect: full, style: cross}
+        - {cell: output, n: 2, connect: full}
+
+  siamese:
+    name: Siamese network
+    year: 1993
+    caption: Twin towers, shared weights
+    objective: contrastive
+    summary: >-
+      Two copies of one network, with the same weights, embed two inputs, and a distance
+      between the embeddings says whether they match. Trained on pairs, it learns a
+      similarity rather than a label; CLIP's two encoders and today's contrastive learning
+      descend from it.
+    read: >-
+      The two towers are copies of one network, so they share every weight. The dashed line is
+      the distance between the two embeddings, the only thing the loss sees.
+    papers:
+      - {cite: Bromley et al. 1993, title: "Signature verification using a “Siamese” time delay neural network", url: "https://papers.nips.cc/paper_files/paper/1993/hash/288cc0ff022877bd3df94bc9360b9c5d-Abstract.html"}
+      - {cite: "Chopra, Hadsell & LeCun 2005", title: "Learning a similarity metric discriminatively, with application to face verification", url: "https://doi.org/10.1109/CVPR.2005.202"}
+    diagram:
+      levels: 3
+      rows:
+        - {id: ax, cell: input, n: 2, xs: [42, 74], level: 0}
+        - {id: ah, cell: hidden, n: 3, xs: [26, 58, 90], level: 1, connect: full, from: ax}
+        - {id: ae, cell: output, n: 1, xs: [58], level: 2, connect: full, from: ah}
+        - {id: bx, cell: input, n: 2, xs: [134, 166], level: 0}
+        - {id: bh, cell: hidden, n: 3, xs: [118, 150, 182], level: 1, connect: full, from: bx}
+        - {id: be, cell: output, n: 1, xs: [150], level: 2, connect: full, from: bh}
+      links:
+        - {from: ae, to: be, rule: full, style: cross}
+
+  # ---------------------------------------------------------------- autoencoders and generative
+  autoencoder:
+    name: Autoencoder
+    year: 1988
+    caption: Squeeze, then reconstruct
+    objective: reconstruct
+    summary: >-
+      An encoder compresses the input into a small code and a decoder reconstructs the
+      input from it. The training target is the input itself.
+    read: Ringed red outputs are trained to match the inputs.
+    papers:
+      - {cite: Bourlard & Kamp 1988, title: "Auto-association by multilayer perceptrons and singular value decomposition", url: "https://doi.org/10.1007/BF00332918"}
+    diagram:
+      rows:
+        - {cell: input, n: 4}
+        - {cell: hidden, n: 2, connect: full}
+        - {cell: match, n: 4, connect: full}
+
+  sparse_ae:
+    name: Sparse autoencoder
+    year: 2006
+    caption: Wide code, few active units
+    objective: reconstruct
+    summary: >-
+      A wide code where a sparsity penalty keeps only a few units active for each input.
+      The same tool is now used to break LLM activations into interpretable features.
+    read: Faded units are inactive for this input.
+    papers:
+      - {cite: Ranzato et al. 2006, title: "Efficient learning of sparse representations with an energy-based model", url: "https://papers.nips.cc/paper_files/paper/2006/hash/87f4d79e36d68c3031ccf6c55e9bbd39-Abstract.html"}
+      - {cite: Bricken et al. 2023, title: "Towards monosemanticity: Decomposing language models with dictionary learning", url: "https://transformer-circuits.pub/2023/monosemantic-features"}
+    diagram:
+      rows:
+        - {cell: input, n: 3}
+        - {cell: hidden, n: 6, pitch: 32, connect: full, dim: [0, 2, 3, 5]}
+        - {cell: match, n: 3, connect: full}
+
+  denoising_ae:
+    name: Denoising autoencoder
+    year: 2008
+    caption: Clean up a noisy input
+    objective: denoise
+    summary: >-
+      Corrupts the input with noise and trains the network to reconstruct the clean
+      version, which forces it to learn structure instead of copying. Diffusion models
+      apply the same idea at many noise levels.
+    papers:
+      - {cite: Vincent et al. 2008, title: "Extracting and composing robust features with denoising autoencoders", url: "https://doi.org/10.1145/1390156.1390294"}
+    diagram:
+      rows:
+        - {cell: noisy, n: 4}
+        - {cell: hidden, n: 3, connect: full}
+        - {cell: match, n: 4, connect: full}
+
+  vae:
+    name: Variational autoencoder
+    year: 2013
+    caption: Sample a code, then decode
+    objective: variational
+    summary: >-
+      The encoder outputs a distribution over codes; a sample is drawn by adding noise
+      (the reparameterization trick) and decoded. A penalty keeps codes close to a simple
+      prior, so new samples decode into plausible data.
+    read: The ringed green cells are sampled; the wave-marked cell on the right is the injected noise.
+    papers:
+      - {cite: Kingma & Welling 2013, title: "Auto-encoding variational Bayes", url: "https://arxiv.org/abs/1312.6114"}
+    diagram:
+      rows:
+        - {id: x, cell: input, n: 4}
+        - {id: z, cell: prob, n: 2, connect: full}
+        - {id: y, cell: match, n: 4, connect: full}
+        - {id: eps, cell: noise, n: 1, xs: [182], y: 104}
+      links:
+        - {from: eps, to: z, rule: full}
+
+  gan:
+    name: GAN
+    full: Generative adversarial network
+    year: 2014
+    caption: Generator vs. discriminator
+    objective: adversarial
+    summary: >-
+      A generator turns noise into samples; a discriminator sees generated and real
+      samples and learns to tell them apart. Each trains against the other until the
+      generated samples are hard to tell from real ones.
+    read: >-
+      Left, the generator, fed random noise; right, the discriminator. The arrow carries
+      a generated sample into the discriminator next to a real one.
+    papers:
+      - {cite: Goodfellow et al. 2014, title: "Generative adversarial nets", url: "https://arxiv.org/abs/1406.2661"}
+    diagram:
+      rows:
+        - {id: z, cell: noise, n: 2, xs: [36, 68], y: 130}
+        - {id: g, cell: hidden, n: 3, xs: [20, 52, 84], y: 72, connect: full, from: z}
+        - {id: gx, cell: output, n: 2, xs: [36, 68], y: 14, connect: full, from: g}
+        - {id: dx, cell: [output, input], xs: [136, 176], y: 130}
+        - {id: dh, cell: hidden, n: 3, xs: [124, 156, 188], y: 72, connect: full, from: dx}
+        - {id: dy, cell: output, n: 1, xs: [156], y: 14, connect: full, from: dh}
+      arrows:
+        - {from: [gx, 1], to: [dx, 0]}
+
+  diffusion:
+    name: Diffusion model
+    year: 2015
+    caption: One denoiser, run T times
+    objective: denoise
+    summary: >-
+      Training adds noise to data in many small steps and teaches one network to undo a
+      step. Sampling starts from pure noise and applies that denoiser over and over.
+      DDPM (2020) made it work well; the denoiser is usually a U-Net or a Transformer.
+    read: The return arrow is the sampling loop; each pass removes a little noise.
+    papers:
+      - {cite: Sohl-Dickstein et al. 2015, title: "Deep unsupervised learning using nonequilibrium thermodynamics", url: "https://arxiv.org/abs/1503.03585"}
+      - {cite: "Ho, Jain & Abbeel 2020", title: "Denoising diffusion probabilistic models", url: "https://arxiv.org/abs/2006.11239"}
+    diagram:
+      rows:
+        - {id: x, cell: noisy, n: 3}
+        - {id: h, cell: hidden, n: 3, connect: full}
+        - {id: y, cell: output, n: 3, connect: full}
+      loops:
+        - {from: [y, 2], to: [x, 2], side: right}
+
+  # ---------------------------------------------------------------- flows and autoregressive models
+  normalizing_flow:
+    name: Normalizing flow
+    year: 2014
+    caption: Invertible map from noise to data
+    objective: likelihood
+    summary: >-
+      A stack of invertible layers turns noise into data, and the same layers run backward
+      turn data into noise, so the model can compute an exact likelihood and is trained by
+      maximizing it. In a coupling layer half the units pass straight through and set how
+      the other half change, which keeps the inverse cheap.
+    read: >-
+      Read upward, noise becomes data. In each layer two units pass straight through and
+      steer the other two; the next layer swaps roles, so every unit is transformed in turn.
+    papers:
+      - {cite: "Dinh, Krueger & Bengio 2014", title: "NICE: Non-linear independent components estimation", url: "https://arxiv.org/abs/1410.8516"}
+      - {cite: Rezende & Mohamed 2015, title: "Variational inference with normalizing flows", url: "https://arxiv.org/abs/1505.05770"}
+      - {cite: "Dinh, Sohl-Dickstein & Bengio 2016", title: "Density estimation using Real NVP", url: "https://arxiv.org/abs/1605.08803"}
+    diagram:
+      rows:
+        - {id: z, cell: noise, n: 4}
+        - {id: c1, cell: hidden, n: 4}
+        - {id: c2, cell: hidden, n: 4}
+        - {id: y, cell: output, n: 4, connect: one}
+      links:
+        - {from: z, to: c1, rule: pairs, pairs: [[0, 0], [1, 1], [2, 2], [3, 3], [0, 2], [0, 3], [1, 2], [1, 3]]}
+        - {from: c1, to: c2, rule: pairs, pairs: [[0, 0], [1, 1], [2, 2], [3, 3], [2, 0], [2, 1], [3, 0], [3, 1]]}
+
+  wavenet:
+    name: WaveNet
+    full: Dilated causal convolutional network
+    year: 2016
+    caption: Dilated causal convolutions
+    objective: next token
+    summary: >-
+      Predicts each audio sample from the ones before it with a stack of convolutions that
+      look only backward and reach further at each layer, so a few layers see thousands of
+      samples. It made neural speech synthesis sound natural; PixelCNN did the same for
+      images, and temporal convolutional networks generalized the recipe.
+    read: >-
+      Each pink cell reads its own position and one position back; the next layer reaches
+      two back, doubling at each layer. Nothing reads to the right, so each output predicts
+      the next sample.
+    papers:
+      - {cite: van den Oord et al. 2016, title: "WaveNet: A generative model for raw audio", url: "https://arxiv.org/abs/1609.03499"}
+      - {cite: "Bai, Kolter & Koltun 2018", title: "An empirical evaluation of generic convolutional and recurrent networks for sequence modeling", url: "https://arxiv.org/abs/1803.01271"}
+    diagram:
+      rows:
+        - {id: x, cell: input, n: 6, pitch: 32}
+        - {id: c1, cell: conv, n: 6, pitch: 32}
+        - {id: c2, cell: conv, n: 6, pitch: 32}
+        - {id: y, cell: output, n: 6, pitch: 32, connect: one}
+      links:
+        - {from: x, to: c1, rule: pairs, pairs: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]}
+        - {from: c1, to: c2, rule: pairs, pairs: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [0, 2], [1, 3], [2, 4], [3, 5]]}
+
+  neural_ode:
+    name: Neural ODE
+    full: Neural ordinary differential equation
+    year: 2018
+    caption: A ResNet with continuous depth
+    objective: supervised
+    summary: >-
+      Treats a residual block as the derivative of the hidden state and lets an ODE solver
+      decide how many steps to take, so depth becomes continuous and memory stays constant.
+      Its continuous normalizing flows are what flow matching later learned to train without
+      a solver.
+    read: >-
+      One residual block: the curved lines carry each unit past it, as in ResNet. The return
+      arrow runs the same block again, one solver step at a time.
+    papers:
+      - {cite: Chen et al. 2018, title: "Neural ordinary differential equations", url: "https://arxiv.org/abs/1806.07366"}
+    diagram:
+      rows:
+        - {id: x, cell: input, n: 3}
+        - {id: h, cell: hidden, n: 3, connect: one}
+        - {id: f, cell: hidden, n: 3, connect: full}
+        - {id: g, cell: hidden, n: 3, connect: full}
+        - {id: y, cell: output, n: 3, connect: one}
+      arcs:
+        - {from: h, to: g, side: right}
+      loops:
+        - {from: [g, 0], to: [h, 0], side: left}
+
+  flow_matching:
+    name: Flow matching
+    full: Continuous normalizing flow, trained by flow matching
+    year: 2022
+    caption: Velocity along straight paths
+    objective: flow matching
+    summary: >-
+      Trains one network to output the velocity that carries a point from noise toward data
+      along a straight line, by regressing on that velocity at random points along the way;
+      rectified flow is the same recipe. Sampling integrates the learned velocity. Each
+      training path is straight, but the learned flow averages paths that cross, so its
+      trajectories bend and samplers still take tens of steps unless the model is distilled.
+      Stable Diffusion 3, Flux, and Movie Gen generate this way.
+    read: >-
+      The drawing is the diffusion model's, because the network is the same; what differs is
+      the target it learns (a velocity, not the noise) and the path it is trained along (a
+      straight line from noise to data). The return arrow is one step along the way.
+    papers:
+      - {cite: Lipman et al. 2022, title: "Flow matching for generative modeling", url: "https://arxiv.org/abs/2210.02747"}
+      - {cite: "Liu, Gong & Liu 2022", title: "Flow straight and fast: Learning to generate and transfer data with rectified flow", url: "https://arxiv.org/abs/2209.03003"}
+      - {cite: Esser et al. 2024, title: "Scaling rectified flow transformers for high-resolution image synthesis", url: "https://arxiv.org/abs/2403.03206"}
+    diagram:
+      rows:
+        - {id: x, cell: noisy, n: 3}
+        - {id: h, cell: hidden, n: 3, connect: full}
+        - {id: y, cell: velocity, n: 3, connect: full}
+      loops:
+        - {from: [y, 2], to: [x, 2], side: right}
+
+  # ---------------------------------------------------------------- attention
+  transformer:
+    name: Transformer
+    year: 2017
+    caption: Encoder, decoder, cross-attention
+    objective: next token
+    summary: >-
+      Self-attention lets every position read from every other in one step, with no
+      recurrence. The original model pairs a bidirectional encoder with a causal decoder
+      that also attends to the encoder's output.
+    read: >-
+      Left, the encoder; right, the decoder. The decoder's lower attention row is causal
+      self-attention; the dashed lines into its upper row are cross-attention, reading the
+      encoder's output.
+    papers:
+      - {cite: Vaswani et al. 2017, title: "Attention is all you need", url: "https://arxiv.org/abs/1706.03762"}
+    diagram:
+      levels: 4
+      rows:
+        - {id: ex, cell: input, n: 3, xs: [16, 58, 100], level: 0}
+        - {id: ea, cell: attention, n: 3, xs: [16, 58, 100], y: 96, connect: full, from: ex}
+        - {id: dx, cell: input, n: 2, xs: [136, 178], level: 0}
+        - {id: da, cell: attention, n: 2, xs: [136, 178], y: 96, connect: causal, from: dx}
+        - {id: dc, cell: attention, n: 2, xs: [136, 178], level: 2, connect: one, from: da}
+        - {id: dy, cell: output, n: 2, xs: [136, 178], level: 3, connect: one, from: dc}
+      links:
+        - {from: ea, to: dc, rule: full, style: cross}
+
+  bert:
+    name: BERT
+    year: 2018
+    caption: Every token sees every token
+    objective: masked token
+    summary: >-
+      A Transformer encoder on its own: every token attends to every other in both
+      directions. Pretrained by hiding words and predicting them, then fine-tuned for
+      classification, search, and tagging.
+    read: The dashed input is a masked word. Only its prediction is scored during pretraining, so the other outputs are faded.
+    papers:
+      - {cite: Devlin et al. 2018, title: "BERT: Pre-training of deep bidirectional transformers for language understanding", url: "https://arxiv.org/abs/1810.04805"}
+    diagram:
+      rows:
+        - {cell: [input, input, mask, input]}
+        - {cell: attention, n: 4, connect: full}
+        - {cell: attention, n: 4, connect: full}
+        - {cell: output, n: 4, connect: one, dim: [0, 1, 3]}
+
+  gpt:
+    name: GPT-style LLM
+    full: Decoder-only Transformer, large language model
+    year: 2018
+    caption: Each token sees only the past
+    objective: next token
+    summary: >-
+      A Transformer decoder on its own: each token attends to itself and earlier tokens,
+      and the model predicts the next token. Scaled up and post-trained, this is the shape
+      of most large language models today.
+    papers:
+      - {cite: Radford et al. 2018, title: "Improving language understanding by generative pre-training", url: "https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf"}
+    diagram:
+      rows:
+        - {cell: input, n: 4}
+        - {cell: attention, n: 4, connect: causal}
+        - {cell: attention, n: 4, connect: causal}
+        - {cell: output, n: 4, connect: one}
+
+  vit:
+    name: ViT
+    full: Vision Transformer
+    year: 2020
+    caption: Image patches become tokens
+    objective: supervised
+    summary: >-
+      Cuts an image into patches, embeds each patch as a token, and runs a standard
+      Transformer encoder. Given enough data it matches or beats CNNs, and it is the
+      usual image encoder in multimodal models.
+    read: >-
+      The image at the lower left is cut into patches, and each patch, embedded, is one
+      input token; the single output is the class, pooled from every patch. The original
+      paper reads it instead from an extra learned class token, which works about as well.
+    papers:
+      - {cite: Dosovitskiy et al. 2020, title: "An image is worth 16x16 words: Transformers for image recognition at scale", url: "https://arxiv.org/abs/2010.11929"}
+    diagram:
+      levels: 4
+      rows:
+        - {id: img, cell: patch, n: 4, xs: [14, 31, 14, 31], ys: [121, 121, 138, 138], marks: false}
+        - {id: t, cell: patch, n: 4, xs: [72, 106, 140, 174], level: 0}
+        - {id: a1, cell: attention, n: 4, xs: [72, 106, 140, 174], level: 1, connect: full, from: t}
+        - {id: a2, cell: attention, n: 4, xs: [72, 106, 140, 174], level: 2, connect: full, from: a1}
+        - {id: y, cell: output, n: 1, xs: [123], level: 3, connect: full, from: a2}
+      arrows:
+        - {from: img, to: [t, 0]}
+
+  clip:
+    name: CLIP
+    full: Contrastive language–image pretraining
+    year: 2021
+    caption: Match images to captions
+    objective: contrastive
+    summary: >-
+      An image encoder and a text encoder are trained so that matching image and caption
+      pairs land close together and mismatched pairs land far apart. The result supports
+      zero-shot classification and guides many image generators.
+    read: Left, the image encoder over patches; right, the text encoder. The dashed line is the similarity being trained.
+    papers:
+      - {cite: Radford et al. 2021, title: "Learning transferable visual models from natural language supervision", url: "https://arxiv.org/abs/2103.00020"}
+    diagram:
+      levels: 4
+      rows:
+        - {id: ip, cell: patch, n: 3, xs: [22, 52, 82], level: 0}
+        - {id: i1, cell: attention, n: 3, xs: [22, 52, 82], level: 1, connect: full, from: ip}
+        - {id: i2, cell: attention, n: 3, xs: [22, 52, 82], level: 2, connect: full, from: i1}
+        - {id: ie, cell: output, n: 1, xs: [52], level: 3, connect: full, from: i2}
+        - {id: tt, cell: input, n: 3, xs: [126, 156, 186], level: 0}
+        - {id: t1, cell: attention, n: 3, xs: [126, 156, 186], level: 1, connect: causal, from: tt}
+        - {id: t2, cell: attention, n: 3, xs: [126, 156, 186], level: 2, connect: causal, from: t1}
+        - {id: te, cell: output, n: 1, xs: [156], level: 3, connect: pairs, pairs: [[2, 0]], from: t2}
+      links:
+        - {from: ie, to: te, rule: full, style: cross}
+
+  diffusion_llm:
+    name: Masked diffusion LLM
+    in_text: diffusion LLMs   # how the subtitle names it, as the newest panel
+    full: Masked diffusion language model
+    year: 2025
+    caption: Unmask tokens in parallel
+    objective: masked token
+    summary: >-
+      Generates text by starting from a fully masked sequence and filling in tokens over
+      several parallel passes of a bidirectional Transformer. Masked diffusion for text goes
+      back to D3PM (2021) and was simplified by MDLM (2024); LLaDA (2025) trained it from
+      scratch at 8 billion parameters and showed it can be competitive with autoregressive
+      models of similar size. Other diffusion language models work in continuous embeddings
+      or with other kinds of noise.
+    read: Dashed inputs are still masked; the faded outputs are tokens already in place, which the model keeps. Each pass fills in some of the masked tokens, and the result goes back in as the next input.
+    papers:
+      - {cite: Nie et al. 2025, title: "Large language diffusion models", url: "https://arxiv.org/abs/2502.09992"}
+      - {cite: Austin et al. 2021, title: "Structured denoising diffusion models in discrete state-spaces", url: "https://arxiv.org/abs/2107.03006"}
+      - {cite: Sahoo et al. 2024, title: "Simple and effective masked diffusion language models", url: "https://arxiv.org/abs/2406.07524"}
+    diagram:
+      rows:
+        - {id: x, cell: [input, mask, input, mask]}
+        - {id: a1, cell: attention, n: 4, connect: full}
+        - {id: a2, cell: attention, n: 4, connect: full}
+        - {id: y, cell: output, n: 4, connect: one, dim: [0, 2]}
+      loops:
+        - {from: [y, 3], to: [x, 3], side: right}
+
+  # ---------------------------------------------------------------- linear-time sequence models
+  linear_attention:
+    name: Linear attention
+    year: 2020
+    caption: Attention rewritten as an RNN
+    objective: next token
+    summary: >-
+      Drops the softmax so attention becomes a running sum: the model keeps a
+      matrix-valued state that each token writes to and reads from. RetNet, RWKV, xLSTM,
+      and Gated DeltaNet refine it with decay and gating.
+    read: Square cells hold a matrix state rather than a vector.
+    papers:
+      - {cite: Katharopoulos et al. 2020, title: "Transformers are RNNs: Fast autoregressive transformers with linear attention", url: "https://arxiv.org/abs/2006.16236"}
+      - {cite: Peng et al. 2023, title: "RWKV: Reinventing RNNs for the Transformer era", url: "https://arxiv.org/abs/2305.13048"}
+      - {cite: Beck et al. 2024, title: "xLSTM: Extended long short-term memory", url: "https://arxiv.org/abs/2405.04517"}
+    diagram:
+      rows:
+        - {cell: input, n: 4}
+        - {cell: matrix, n: 4, connect: one, chain: right}
+        - {cell: output, n: 4, connect: one}
+
+  mamba:
+    name: Mamba
+    full: Selective state-space model
+    year: 2023
+    caption: Selective state, linear time
+    objective: next token
+    summary: >-
+      A state-space model whose update depends on the current input, so it can choose
+      what to keep or forget. The state has a fixed size, so the cost per generated token
+      stays flat as context grows, and the linear recurrence still trains in parallel.
+    read: >-
+      Each dotted line is the input setting, at the dot, how much of the incoming state is
+      kept. Unlike the LSTM's and GRU's gates it reads only the input, not the previous
+      state, which is what lets the recurrence train in parallel.
+    papers:
+      - {cite: Gu & Dao 2023, title: "Mamba: Linear-time sequence modeling with selective state spaces", url: "https://arxiv.org/abs/2312.00752"}
+    diagram:
+      rows:
+        - {cell: input, n: 4}
+        - {cell: selective, n: 4, connect: one, chain: right, gate: true}
+        - {cell: output, n: 4, connect: one}
+
+  mamba_hybrid:
+    name: Mamba hybrid
+    year: 2024
+    caption: Mostly Mamba, some attention
+    objective: next token
+    summary: >-
+      Interleaves many Mamba layers with a few attention layers. The state-space layers
+      are cheap over long contexts, and the attention layers handle precise recall.
+      Jamba uses about one attention layer for every seven Mamba layers.
+    papers:
+      - {cite: Lieber et al. 2024, title: "Jamba: A hybrid Transformer–Mamba language model", url: "https://arxiv.org/abs/2403.19887"}
+    read: >-
+      The middle row is the attention layer, where each position reads every earlier one;
+      the state rows below and above it carry a running summary forward instead.
+    diagram:
+      rows:   # the attention row is given room to fan out over the ringed cells below it
+        - {cell: input, n: 4, y: 130}
+        - {cell: selective, n: 4, y: 106, connect: one, chain: right}
+        - {cell: attention, n: 4, y: 62, connect: causal}
+        - {cell: selective, n: 4, y: 38, connect: one, chain: right}
+        - {cell: output, n: 4, y: 14, connect: one}
+
+  # ---------------------------------------------------------------- routing and graphs
+  gnn:
+    name: Graph neural network
+    year: 2005
+    caption: Nodes pool neighbor messages
+    objective: supervised
+    summary: >-
+      Each node updates its state from messages sent by its neighbors, repeated for a few
+      rounds, so information spreads along the graph. Graph attention networks weigh each
+      neighbor's message by attention instead of pooling them equally. Used for molecules,
+      maps, and recommendations. A Transformer is close to a GNN on a fully connected graph.
+    read: The red node is updating from its neighbors' messages; faded nodes are two hops away.
+    papers:
+      - {cite: "Gori, Monfardini & Scarselli 2005", title: "A new model for learning in graph domains", url: "https://doi.org/10.1109/IJCNN.2005.1555942"}
+      - {cite: Scarselli et al. 2009, title: "The graph neural network model", url: "https://doi.org/10.1109/TNN.2008.2005605"}
+      - {cite: Kipf & Welling 2016, title: "Semi-supervised classification with graph convolutional networks", url: "https://arxiv.org/abs/1609.02907"}
+      - {cite: Veličković et al. 2017, title: "Graph attention networks", url: "https://arxiv.org/abs/1710.10903"}
+    diagram:
+      rows:
+        - {id: v, cell: [output, hidden, hidden, hidden, hidden, hidden, hidden],
+           xs: [104, 62, 146, 146, 62, 22, 186], ys: [72, 30, 30, 114, 114, 72, 72],
+           dim: [5, 6], dim_opacity: 0.4}
+      links:
+        - {from: v, to: v, rule: pairs, pairs: [[5, 1], [1, 2], [2, 6], [6, 3], [3, 4], [4, 5]]}
+        - {from: v, to: v, rule: pairs, pairs: [[1, 0], [2, 0], [3, 0], [4, 0]], style: state}
+
+  moe:
+    name: Sparse MoE
+    full: Sparsely-gated mixture of experts
+    year: 2017
+    caption: Each token → its top-k experts
+    objective: next token
+    summary: >-
+      Replaces one feed-forward block with many experts and a router that sends each
+      token to its top few. Parameters grow while compute per token doesn't; Mixtral,
+      DeepSeek-V3, and many current LLMs use it. Mixtures of experts date from 1991, when
+      a gating network weighted every expert; the sparse router is what made them scale.
+    read: >-
+      Each token's router picks k experts, here two, as in GShard and Mixtral; the original
+      paper mostly used four, and Switch uses one. The faded expert gets no tokens this time.
+    papers:
+      - {cite: Shazeer et al. 2017, title: "Outrageously large neural networks: The sparsely-gated mixture-of-experts layer", url: "https://arxiv.org/abs/1701.06538"}
+      - {cite: "Jacobs, Jordan, Nowlan & Hinton 1991", title: "Adaptive mixtures of local experts", url: "https://doi.org/10.1162/neco.1991.3.1.79"}
+    diagram:
+      rows:
+        - {id: t, cell: input, n: 4, y: 130}
+        - {id: r, cell: router, n: 4, y: 106, connect: one, from: t}
+        - {id: e, cell: expert, n: 5, pitch: 36, y: 68, dim: [3], dim_opacity: 0.3}
+        - {id: y, cell: output, n: 4, y: 14}
+      links:
+        - {from: r, to: e, rule: pairs, pairs: [[0, 0], [0, 2], [1, 1], [1, 2], [2, 1], [2, 4], [3, 2], [3, 4]]}
+        - {from: e, to: y, rule: pairs, pairs: [[0, 0], [2, 0], [1, 1], [2, 1], [1, 2], [4, 2], [2, 3], [4, 3]]}
+
+  capsnet:
+    name: Capsule network
+    year: 2017
+    caption: Vectors routed by agreement
+    objective: supervised
+    summary: >-
+      Capsules output vectors instead of single numbers, so a unit can encode a feature's
+      pose as well as its presence. Lower capsules send their output to higher ones in
+      proportion to how well their predictions agree.
+    papers:
+      - {cite: "Sabour, Frosst & Hinton 2017", title: "Dynamic routing between capsules", url: "https://arxiv.org/abs/1710.09829"}
+    read: >-
+      The top capsules are the classes; each output is the length of its capsule's vector,
+      the probability that the class is present.
+    diagram:
+      rows:
+        - {cell: input, n: 5, pitch: 32}
+        - {cell: conv, n: 4, pitch: 32, connect: "near:2"}
+        - {cell: capsule, n: 3, connect: "near:2"}
+        - {cell: capsule, n: 2, connect: full}
+        - {cell: output, n: 2, connect: one}

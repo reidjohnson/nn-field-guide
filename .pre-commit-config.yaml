@@ -1,0 +1,21 @@
+---
+# The hooks of zillow/quantile-forest, less its Cython ones (this project has no Cython).
+# dist/ is left alone: it is written by `python guide.py build` and committed as built.
+# Set up once with `pip install pre-commit && pre-commit install`.
+exclude: ^dist/
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+  - id: check-case-conflict
+  - id: check-merge-conflict
+  - id: trailing-whitespace
+- repo: https://github.com/psf/black
+  rev: 26.5.1
+  hooks:
+  - id: black
+- repo: https://github.com/pycqa/isort
+  rev: 9.0.0a3
+  hooks:
+  - id: isort
+    name: isort (python)
