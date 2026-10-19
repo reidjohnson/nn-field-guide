@@ -30,7 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import guide  # noqa: E402
 
-JOBS = list(guide.GROUPS)  # input, hidden, state, mixing, output
+JOBS = [g for g, v in guide.GROUPS.items() if v.get("job", True)]  # the five jobs; not Network
 VISIONS = [
     ("normal", "Normal"),
     ("protan", "Protanopia"),
@@ -217,8 +217,8 @@ def closest(fills, vision):
 # --------------------------------------------------------------------------
 
 DEFAULT_HEX = {}
-for job, g in guide.GROUPS.items():
-    fill, stroke = guide.PALETTE[g["color"]]
+for job in JOBS:
+    fill, stroke = guide.PALETTE[guide.GROUPS[job]["color"]]
     DEFAULT_HEX[fill.upper()] = f"f-{job}"
     DEFAULT_HEX[stroke.upper()] = f"s-{job}"
 

@@ -152,6 +152,11 @@ def para(text) -> str:
 # --------------------------------------------------------------------------
 
 EXTRA_CSS = r"""
+.tx { display: grid; gap: 6px; margin: 12px 0; max-width: 78ch; }
+.tx p { margin: 0; }
+.tx-tag { display: block; margin-bottom: 2px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.tx-before { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); }
+.txt-change { border-top: 1px solid var(--rule); padding-top: 12px; margin-top: 12px; }
 .vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
 
 .note { max-width: 76ch; margin: 10px 0 0; text-wrap: pretty; }
@@ -761,6 +766,117 @@ def variants_section(doc: dict, va: dict, panels: Panels) -> str:
     )
 
 
+_guide_glyph = guide.glyph_svg
+
+
+def glyph_variant(glyph: str, x: float, y: float) -> str:
+    """guide.glyph_svg, plus marks a proposal may try: "net-dots" and "net-rings", a tiny
+    network (two nodes feeding one, read upward) drawn with filled dots or small rings."""
+    if glyph not in ("net-dots", "net-rings"):
+        return _guide_glyph(glyph, x, y)
+    top, left, right = (x, y - 2.7), (x - 3.0, y + 2.5), (x + 3.0, y + 2.5)
+    r = 0.95 if glyph == "net-dots" else 1.15
+    out = []
+    for a, b in ((left, top), (right, top)):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = math.hypot(dx, dy)
+        ux, uy = dx / L, dy / L
+        g = r + (0.45 if glyph == "net-dots" else 0.55)
+        out.append(
+            f'<path d="M{f(a[0] + ux * g)},{f(a[1] + uy * g)} L{f(b[0] - ux * g)},{f(b[1] - uy * g)}"/>'
+        )
+    out += [f'<circle cx="{f(px)}" cy="{f(py)}" r="{r}"/>' for px, py in (top, left, right)]
+    return "".join(out)
+
+
+guide.glyph_svg = glyph_variant
+
+
+def redraw_section(doc: dict, rd: dict, panels: Panels) -> str:
+    """Panels redrawn from new specs, one option per chip: each option may add cell types (shown
+    with their legend label) and gives a diagram per panel, drawn beside the panel as it is."""
+    arch = doc["architectures"]
+    opts = rd["options"]
+    first = next((o["key"] for o in opts if "recommended" in o["label"]), opts[0]["key"])
+    views = []
+    for o in opts:
+        for k, v in (o.get("palette") or {}).items():  # a new color, as (fill, outline)
+            guide.PALETTE.setdefault(k, tuple(v))
+        for k, v in (o.get("groups") or {}).items():  # a new group, after the five
+            guide.GROUPS.setdefault(k, dict(v))
+        for k, v in (o.get("glyph_ink") or {}).items():  # a mark's ink on a new color
+            guide.GLYPH_INK_ON.setdefault(k, v)
+        install_cells(o.get("cells"))
+        legend = "".join(
+            f'<span class="muted">Legend, under {esc(guide.GROUPS[c["group"]]["label"])}:</span> '
+            f'<svg viewBox="-16 -16 32 32" width="28" height="28" style="vertical-align:middle">'
+            f'{guide.cell_svg(k, 0, 0, ink="currentColor", marks=False)}</svg> {esc(c["label"])}'
+            for k, c in (o.get("cells") or {}).items()
+        )
+        rows = []
+        for pid, spec in o["panels"].items():
+            a = arch[pid]
+            after = dict(a, diagram=spec)
+            note = (o.get("notes") or {}).get(pid, "")
+            rows.append(
+                f'<div class="change">{card(panels, pid, a, "Now")}'
+                f'{card(panels, pid + "-" + o["key"], after, "Proposed", spec)}'
+                f'<div class="why"><h3>{esc(a["name"])}</h3><p>{esc(para(note))}</p></div></div>'
+            )
+        strip = ""
+        if rd.get("print"):  # the proposed panels at the size the poster prints them
+            strip = "".join(
+                f'<div style="width:{f(guide.W)}px">{panels.use(pid + "-" + o["key"], spec, arch[pid]["name"])}</div>'
+                for pid, spec in o["panels"].items()
+            )
+            row = f'<div style="display:flex;flex-wrap:wrap;gap:12px">{strip}</div>'
+            strip = '<p class="crop-label">At print size</p>' + row
+            if rd.get("grayscale"):  # the same, printed in black and white
+                strip += (
+                    '<p class="crop-label">At print size, in grayscale</p>'
+                    f'<div style="filter:grayscale(1)">{row}</div>'
+                )
+            if rd.get("dark"):  # the same, on the dark poster
+                strip += (
+                    '<p class="crop-label">At print size, on the dark poster</p>'
+                    f'<div style="background:{guide.BG_DARK};color:{guide.INK_DARK};padding:10px;border-radius:8px">{row}</div>'
+                )
+        hidden = "" if o["key"] == first else " hidden"
+        views.append(
+            f'<div class="variant" data-view="{rd["key"]}" data-side="{o["key"]}"{hidden}>'
+            f'<h3>{esc(o["label"])}</h3><p class="note">{esc(para(o["note"]))}</p>'
+            f'<p class="what">{legend}</p>{strip}{"".join(rows)}</div>'
+        )
+    return (
+        f'<h2>{esc(rd["title"])}</h2><p class="note">{esc(para(rd["intro"]))}</p>'
+        + chips(rd["key"], [(o["key"], o["label"]) for o in opts], first)
+        + "".join(views)
+    )
+
+
+def texts_section(doc: dict, tx: dict) -> str:
+    """Changes to an architecture's text on the page: each field as it is, then as proposed."""
+    arch = doc["architectures"]
+    out = []
+    for ch in tx["changes"]:
+        a = arch[ch["panel"]]
+        fields = []
+        for f_name, after in ch["fields"].items():
+            before = a.get(f_name, "")
+            fields.append(
+                f'<div class="tx"><p class="eyebrow">{esc(f_name)}</p>'
+                f'<p class="tx-before"><span class="tx-tag">Now</span>{esc(para(before))}</p>'
+                f'<p class="tx-after"><span class="tx-tag">Proposed</span>{esc(para(after))}</p></div>'
+            )
+        out.append(
+            f'<div class="txt-change"><h3>{esc(a["name"])}</h3>'
+            f'<p class="note">{esc(para(ch.get("note", "")))}</p>{"".join(fields)}</div>'
+        )
+    return f'<h2>{esc(tx["title"])}</h2><p class="note">{esc(para(tx["intro"]))}</p>' + "".join(
+        out
+    )
+
+
 def lookalike_section(doc: dict, la: dict, panels: Panels) -> str:
     arch = doc["architectures"]
     pairs = []
@@ -927,6 +1043,10 @@ def build():
         marks_html += sh_html + sh_sprite
     for va in prop.get("variants") or []:
         marks_html += variants_section(doc, va, panels)
+    for rd in prop.get("redraws") or []:
+        marks_html += redraw_section(doc, rd, panels)
+    if prop.get("texts"):
+        marks_html += texts_section(doc, prop["texts"])
     look_html = (
         lookalike_section(doc, prop["lookalikes"], panels) if prop.get("lookalikes") else ""
     )

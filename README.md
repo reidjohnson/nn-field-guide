@@ -8,7 +8,7 @@ A reference chart of 42 neural network architectures and training schemes, from 
 
 ## How to read it
 
-Each panel runs from input at the bottom to output at the top. A circle is one unit (in sequence models, one token's vector); a square is something bigger, such as an image patch or a whole expert network. Faded cells and links take little or no part in the step shown. The poster's legend and the page explain every mark; in short:
+Each panel runs from input at the bottom to output at the top. A circle is one unit (in sequence models, one token's vector); a square is something bigger, such as an image patch or a whole network (a gray box). Faded cells and links take little or no part in the step shown. The poster's legend and the page explain every mark; in short:
 
 | Job | Color | Mark |
 |---|---|---|
@@ -17,6 +17,7 @@ Each panel runs from input at the bottom to output at the top. A circle is one u
 | State: carries memory between steps | blue | an outer ring |
 | Mixing: mixes across positions | pink | a tick on each side |
 | Output: what the network produces | red | a stem above |
+| Network: a whole network in one box, any architecture (a generator, a denoiser, an expert) | dark gray, not a sixth hue (darker than every color, so it stays distinct in grayscale) | a tiny network inside a square, in white |
 
 ## Building it
 

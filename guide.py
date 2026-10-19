@@ -76,17 +76,20 @@ PALETTE = {  # fill, outline: the Zoo's five hues, tuned so color-blind readers 
     "red": ("#CE481E", "#A21F00"),  # the Zoo's orange, darkened toward red (see palettes.py)
     "blue": ("#578DE6", "#236ABE"),
     "pink": ("#F4A1FD", "#CB7BD5"),
+    # a whole network: a neutral gray, darker than the five hues so it stays distinct in grayscale
+    "gray": ("#5A5853", "#403E3A"),
 }
 GLYPH_INK = "#1A1A1A"  # the ink of a cell's inner mark
 GLYPH_INK_ON = {
-    "red": "#FFFFFF"
-}  # color -> ink where black reads poorly: 4.6:1 on the red, not 3.8:1
+    "red": "#FFFFFF",
+    "gray": "#FFFFFF",
+}  # color -> ink of its inner marks where black reads poorly (white: 4.6:1 on red, 7.1:1 on gray)
 GLYPH_STROKE = 0.9  # stroke width of inner marks, at R0
 INK_LIGHT, BG_LIGHT = "#1C1B19", "#FFFFFF"
 INK_DARK, BG_DARK = "#ECEBE6", "#161615"
 
-# Poster type: each role's size in px and the opacity of the ink it is set in. The opacities are
-# the print-safe tones (proofs/proposals.html): every text role at 7.5:1 or more on both posters.
+# Poster type: each role's size in px and the opacity of the ink it is set in. The opacities keep
+# every text role at 7.5:1 or more on both posters.
 TYPE = {
     "title": (48, 1.0),
     "subtitle": (22, 1.0),
@@ -123,6 +126,8 @@ GROUPS = OrderedDict(
         ("state", dict(color="blue", label="State", mark="ring")),
         ("mixing", dict(color="pink", label="Mixing", mark="sides")),
         ("output", dict(color="red", label="Output", mark="out")),
+        # a whole network: it holds all five jobs, so it is none of them; its own legend column
+        ("network", dict(color="gray", label="Network", mark=None, job=False)),
     ]
 )
 LINK_GROUP = "Links"
@@ -130,23 +135,23 @@ LINK_GROUP = "Links"
 # Cell types, in legend order. The glyph is an inner mark that refines the group.
 CELLS = OrderedDict(
     [
-        ("input", dict(group="input", label="Input")),
+        ("input", dict(group="input", label="Input unit")),
         ("patch", dict(group="input", shape="square", half=6.0, label="Image patch")),
         ("noisy", dict(group="input", glyph="triangle", label="Noisy input")),
         ("noise", dict(group="input", glyph="wave", label="Random noise")),
         ("backfed", dict(group="input", glyph="ring", label="Visible unit (in and out)")),
         ("mask", dict(group="input", hollow=True, label="Masked token")),  # the hidden input, last
-        ("hidden", dict(group="hidden", label="Hidden")),
+        ("hidden", dict(group="hidden", label="Hidden unit")),
         ("prob", dict(group="hidden", glyph="ring", label="Probabilistic hidden")),
         ("capsule", dict(group="hidden", glyph="square", label="Capsule (vector output)")),
-        (
-            "expert",
-            dict(group="hidden", shape="square", glyph="layers", label="Expert (a whole network)"),
-        ),
         ("router", dict(group="hidden", shape="diamond", half=5.5, label="Router")),
-        ("recurrent", dict(group="state", label="Recurrent")),
+        (  # any architecture as one box: an expert, a generator, a denoiser
+            "network",
+            dict(group="network", shape="square", glyph="net", label="A whole network"),
+        ),
+        ("recurrent", dict(group="state", label="Recurrent unit")),
         ("memory", dict(group="state", glyph="ring", label="Memory cell")),
-        ("gated", dict(group="state", glyph="triangle", label="Gated recurrent")),
+        ("gated", dict(group="state", glyph="triangle", label="Gated recurrent unit")),
         ("selective", dict(group="state", glyph="diamond", label="Selective state (SSM)")),
         (
             "matrix",
@@ -154,7 +159,7 @@ CELLS = OrderedDict(
         ),  # the one square, last
         ("attention", dict(group="mixing", label="Attention")),
         ("conv", dict(group="mixing", glyph="ring", label="Convolution or pooling")),
-        ("output", dict(group="output", label="Output")),
+        ("output", dict(group="output", label="Output unit")),
         ("match", dict(group="output", glyph="ring", label="Reconstruction of input")),
         ("velocity", dict(group="output", glyph="arrow", label="Velocity")),
     ]
@@ -193,7 +198,6 @@ OBJECTIVES = [
     "contrastive",
     "likelihood",
     "flow matching",
-    "energy",
     "hebbian",
     "competitive",
 ]
@@ -255,12 +259,28 @@ def half_of(spec: dict, default: float) -> float:
     return spec.get("half", default) * R / R0
 
 
+def rounded_extent(h: float, r: float, ux: float, uy: float) -> float:
+    """Distance from the centre of a square of half-width h, corners rounded to radius r, to
+    its outline in direction (ux, uy)."""
+    ux, uy = abs(ux), abs(uy)
+    t = h / max(ux, uy, 1e-9)  # where the sharp square's edge would be
+    cx = cy = h - r
+    px, py = ux * t, uy * t
+    if px <= cx or py <= cy:  # the ray meets a straight edge
+        return t
+    # otherwise it meets the corner arc: solve |p - c| = r along the ray
+    b = ux * cx + uy * cy
+    return b + math.sqrt(max(b * b - (cx * cx + cy * cy - r * r), 0.0))
+
+
 def extent(cell: Cell, ux: float = 1.0, uy: float = 0.0) -> float:
     """Distance from a cell's centre to its outline (or outer ring) in direction (ux, uy)."""
     spec = CELLS[cell.kind]
     shape = spec.get("shape", "circle")
-    if shape == "square":
-        return (half_of(spec, 7.0) + ring_pad(cell)) / max(abs(ux), abs(uy), 1e-9)
+    if shape == "square":  # a rounded square: its corners sit inside the square's bounds
+        ring = ring_pad(cell) > 0
+        h = half_of(spec, 7.0) + ring_pad(cell)
+        return rounded_extent(h, 4.0 + 0.4 if ring else 2.5, ux, uy)
     if shape == "diamond":
         return half_of(spec, 5.0) / max(abs(ux) + abs(uy), 1e-9)
     return R + ring_pad(cell)
@@ -353,6 +373,28 @@ def centered_xs(n: int, pitch=None, center: float = W / 2) -> list:
 
 
 def build_diagram(arch_id: str, spec: dict) -> Diagram:
+    """Lay out a diagram, then lay it out again moved sideways so the whole drawing, its
+    marks and lines included, sits centred in the panel."""
+    d = layout(arch_id, spec)
+    lo, hi = x_span(d)
+    shift = W / 2 - (lo + hi) / 2
+    return layout(arch_id, dict(spec, shift=shift)) if abs(shift) > 0.05 else d
+
+
+def x_span(d: Diagram) -> tuple:
+    """Leftmost and rightmost points of everything drawn: cells, their stems and ticks, and
+    every line, curve, and arrow."""
+    xs = []
+    for c in d.cells.values():
+        xs += [c.x - extent(c, -1.0, 0.0), c.x + extent(c, 1.0, 0.0)]
+        for p, q in mark_lines(c):
+            xs += [p[0], q[0]]
+    for s in d.segs:
+        xs += [p[0] for p in s.pts]
+    return min(xs), max(xs)
+
+
+def layout(arch_id: str, spec: dict) -> Diagram:
     rows = spec.get("rows", [])
     span = spec.get("span", [Y_BOTTOM, Y_TOP])
     levels, auto = [], 0
@@ -389,7 +431,8 @@ def build_diagram(arch_id: str, spec: dict) -> Diagram:
             xs = r.get("xs") or centered_xs(n, r.get("pitch"), r.get("center", W / 2))
             yy = r["ys"] if "ys" in r else [r["y"] if "y" in r else ys[levels[i]]] * n
             pos = list(zip(xs, yy))
-        pos = [(x, y + PAD_Y) for x, y in pos]
+        # `shift` moves every cell sideways; build_diagram sets it to centre the drawing
+        pos = [(x + spec.get("shift", 0.0), y + PAD_Y) for x, y in pos]
         dim = set(r.get("dim", []))
         dim_op = max(r.get("dim_opacity", 0.32), DIM)
         keys = []
@@ -438,6 +481,10 @@ def build_diagram(arch_id: str, spec: dict) -> Diagram:
         loop(d, lp)
     for ar in spec.get("arrows", []):
         arrow(d, ar)
+    for dp in spec.get("drops", []):
+        drop(d, dp)
+    for fd in spec.get("feeds", []):
+        feed(d, fd)
     assign_mark_dirs(d)
     return d
 
@@ -684,6 +731,54 @@ def arrow(d: Diagram, ar: dict):
             arrow=ar.get("head", True),
         )
     )
+
+
+def drop(d: Diagram, dp: dict):
+    """An arrow that leaves a state arrow partway along and drops straight down into a cell
+    beneath it, with no dot where it branches (that would read as a gate): the state handed
+    on is also read below (Bahdanau's attention reads the previous decoder state)."""
+    A, B = d.cells[ref(d, dp["along"][0])], d.cells[ref(d, dp["along"][1])]
+    T = d.cells[ref(d, dp["to"])]
+    t = (T.x - A.x) / (B.x - A.x)
+    y = A.y + t * (B.y - A.y)
+    top = T.y - extent(T, 0.0, -1.0) - GAP
+    d.segs.append(
+        Seg(
+            dp.get("style", "state"),
+            [(T.x, y), (T.x, top)],
+            ends=(T.key,),
+            near=(A.key, B.key),
+            arrow=True,
+        )
+    )
+
+
+def feed(d: Diagram, fd: dict):
+    """An arrow from a whole group that runs beneath a row of cells, just below their stems,
+    and ends under the last of them: one input handed to every cell of the row (an image's
+    patches to the patch tokens)."""
+    src = [d.cells[k] for k in d.groups[fd["from"]]]
+    row = sorted((d.cells[k] for k in d.groups[fd["to"]]), key=lambda c: c.x)
+    y = max(c.y for c in row) + R + MARK_GAP + STEM + fd.get("drop", 3.0)
+    x0 = max(c.x + extent(c, 1.0, 0.0) for c in src) + GAP
+    x1 = row[-1].x + fd.get("past", 0.0)
+    branches = fd.get("branches", False)  # a short arrow up from the line into each cell
+    if branches:
+        y = max(c.y for c in row) + fd.get("below", R + 14.0)
+    d.segs.append(
+        Seg(
+            fd.get("style", "state"),
+            [(x0, y), (x1, y)],
+            near=tuple(d.groups[fd["from"]]),  # the row it runs beneath keeps its stems
+            arrow=fd.get("head", True) and not branches,
+        )
+    )
+    if branches:
+        for c in row:
+            top = c.y + extent(c, 0.0, 1.0) + GAP
+            d.segs.append(
+                Seg(fd.get("style", "state"), [(c.x, y), (c.x, top)], ends=(c.key,), arrow=True)
+            )
 
 
 # --------------------------------------------------------------------------
@@ -952,8 +1047,11 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
                 )
             if not re.search(r"\d{4}$", str(p.get("cite", ""))):
                 warns.append(f"{aid}: cite '{p.get('cite')}' should end with the year")
+    # a legend column is a panel column, or narrower when there are more groups than panel columns
+    # (the last, Links, is sized to fit its labels; see legend_pitch)
+    col_w = legend_pitch(legend_groups(*used_kinds(diagrams))) - POSTER_GX / 2
     for k, c in CELLS.items():
-        if LEGEND_CELL_X + text_width(c["label"], "body", TYPE["legend"][0]) > W - 2:
+        if LEGEND_CELL_X + text_width(c["label"], "body", TYPE["legend"][0]) > col_w:
             warns.append(f"legend: '{c['label']}' is too wide for its column")
     for k, l in LINKS.items():
         if LEGEND_LINK_X + text_width(l["label"], "body", TYPE["legend"][0]) > W - 2:
@@ -1026,10 +1124,20 @@ def glyph_svg(glyph: str, x: float, y: float) -> str:
         return f'<rect x="{fmt(x - 3)}" y="{fmt(y - 3)}" width="6" height="6"/>'
     if glyph == "diamond":
         return f'<polygon points="{fmt(x)},{fmt(y - 3.7)} {fmt(x + 3.7)},{fmt(y)} {fmt(x)},{fmt(y + 3.7)} {fmt(x - 3.7)},{fmt(y)}"/>'
-    if glyph == "layers":  # three short bars, a stack of layers: a network of its own
-        return "".join(
-            f'<path d="M{fmt(x - 3.6)},{fmt(y + dy)} L{fmt(x + 3.6)},{fmt(y + dy)}"/>'
-            for dy in (-2.8, 0, 2.8)
+    if glyph == "net":  # a tiny network, two nodes feeding one, read upward: a whole network
+        top, left, right = (x, y - 2.7), (x - 3.0, y + 2.5), (x + 3.0, y + 2.5)
+        r, gap = 0.95, 1.4  # node radius; each line stops this far from a node's centre
+        out = []
+        for a, b in ((left, top), (right, top)):
+            ux, uy = b[0] - a[0], b[1] - a[1]
+            n = math.hypot(ux, uy)
+            ux, uy = ux / n, uy / n
+            out.append(
+                f'<path d="M{fmt(a[0] + ux * gap)},{fmt(a[1] + uy * gap)} '
+                f'L{fmt(b[0] - ux * gap)},{fmt(b[1] - uy * gap)}"/>'
+            )
+        return "".join(out) + "".join(
+            f'<circle cx="{fmt(px)}" cy="{fmt(py)}" r="{r}"/>' for px, py in (top, left, right)
         )
     if glyph == "arrow":  # a short arrow, up and to the right: a direction and a speed
         return (
@@ -1306,12 +1414,30 @@ def legend_groups(cells: list, links: list) -> list:
 LEGEND_CELL_X, LEGEND_LINK_X, LEGEND_ROW = 23.0, 31.0, 27.0
 
 
+def legend_pitch(groups: list) -> float:
+    """The distance between legend columns: a panel column's, or, with more groups than panel
+    columns, an even share of the width left once the last column (Links) has room for its
+    longest label."""
+    if len(groups) <= POSTER_COLS:
+        return W + POSTER_GX
+    inner = POSTER_COLS * W + (POSTER_COLS - 1) * POSTER_GX
+    last = max(
+        (LEGEND_LINK_X if kind == "link" else LEGEND_CELL_X)
+        + text_width((LINKS if kind == "link" else CELLS)[k]["label"], "body", TYPE["legend"][0])
+        for kind, k in groups[-1][1]
+    )
+    return (inner - last) / (len(groups) - 1)
+
+
 def legend_columns(cells: list, links: list, x0: float, ink: str, mid: str):
-    """Poster legend: each group sits in its own column, aligned with the panel columns."""
+    """Poster legend: each group sits in its own column, aligned with the panel columns; with
+    more groups than panel columns, the columns share the same width evenly instead."""
     out, height = [], 0.0
-    for ci, (label, items) in enumerate(legend_groups(cells, links)):
-        x = x0 + (ci % POSTER_COLS) * (W + POSTER_GX)
-        top = (ci // POSTER_COLS) * 230.0
+    groups = legend_groups(cells, links)
+    pitch = legend_pitch(groups)
+    for ci, (label, items) in enumerate(groups):
+        x = x0 + ci * pitch
+        top = 0.0
         out.append(
             svg_text(
                 x,
@@ -1677,6 +1803,8 @@ body { background: var(--bg); color: var(--ink); font-family: var(--body); font-
 .legend { margin-top: 8px; border-top: 1px solid var(--rule); padding-top: 12px; }
 .legend summary { cursor: pointer; width: max-content; }
 .legend-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px 14px; margin-top: 8px; }
+/* wide enough for all seven groups in one row: each column as wide as its labels, spread out */
+@media (min-width: 1200px) { .legend-grid { grid-template-columns: repeat(7, auto); justify-content: space-between; } }
 .lg-group { min-width: 0; }
 .lg-title { font-family: var(--display); font-weight: 500; font-size: 14px; margin: 0 0 4px; }
 .lg-group ul, .d-key ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; align-content: start; }
@@ -1905,7 +2033,7 @@ PAGE_JS = r"""
     document.getElementById('d-note').hidden = !d.note;
     setText('d-summary', d.summary);
     setText('d-read', d.read);
-    setText('d-objective', d.objective);
+    setText('d-objective', d.objective + (d.objectiveNote ? ', ' + d.objectiveNote : ''));
     document.getElementById('d-read-wrap').hidden = !d.read;
     // the key: only the cells and links this diagram uses
     const key = document.getElementById('d-key');
@@ -2369,6 +2497,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 familyTitle=fam_of[pid]["title"],
                 caption=caption,
                 objective=a["objective"],
+                objectiveNote=a.get("objective_note", ""),
                 note=" ".join(notes[pid]) if pid in notes else "",
                 summary=a["summary"].strip(),
                 read=a.get("read", "").strip(),
