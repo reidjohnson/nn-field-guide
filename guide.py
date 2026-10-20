@@ -96,6 +96,7 @@ TYPE = {
     "reading": (16, 0.75),
     "legend_head": (15, 1.0),
     "legend": (13.5, 0.9),
+    "part": (15, 1.0),
     "section": (13, 0.78),
     "name": (16, 1.0),
     "caption": (13.5, 0.82),
@@ -187,6 +188,14 @@ LINKS = OrderedDict(
     ]
 )
 
+# Relations between panels, written once on the more specific panel; the page shows each from
+# both ends. key -> (label on the panel that lists it, label on the panel it points to)
+RELATIONS = {
+    "kind_of": ("Kind of", "Kinds"),
+    "builds_on": ("Builds on", "Led to"),
+    "built_with": ("Often built with", "Often used in"),
+}
+
 OBJECTIVES = [
     "supervised",
     "next token",
@@ -201,6 +210,104 @@ OBJECTIVES = [
     "hebbian",
     "competitive",
 ]
+
+# What each objective optimizes, one line under the tag in the page's panel; a rule, where
+# training follows an update rule rather than a loss. A panel may give its own
+# `objective_math` (its landmark paper's form). Markup: `x` a variable (italic), _{...} subscript,
+# ^{...} superscript.
+OBJECTIVE_MATH = {
+    "supervised": (
+        "minimize loss(`f`(`x`), `y`) over labeled pairs (`x`, `y`), `f` the network; e.g. "
+        "−log `p`(`y` | `x`), the negative log probability of the correct label"
+    ),
+    "next token": (
+        "maximize Σ_{`t`} log `p`(`x`_{`t`} | `x`_{<`t`}): the probability of each token "
+        "`x`_{`t`} given the tokens before it"
+    ),
+    "masked token": (
+        "maximize Σ_{`i`∈`M`} log `p`(`x`_{`i`} | `x̃`), `M` a random set of positions, "
+        "`x̃` the input with them masked"
+    ),
+    "reconstruct": "minimize ‖`x` − `g`(`f`(`x`))‖², `f` the encoder, `g` the decoder",
+    "denoise": (
+        "minimize ‖`x` − `g`(`f`(`x̃`))‖², `x̃` a corrupted copy of `x`, `f` the encoder, "
+        "`g` the decoder"
+    ),
+    "variational": (
+        "maximize E_{`q`(`z`|`x`)}[log `p`(`x`|`z`)] − KL(`q`(`z`|`x`) ‖ `p`(`z`)): `q` "
+        "encodes `x` to a code `z`, `p`(`x`|`z`) decodes it, and the KL term keeps codes "
+        "near a prior `p`(`z`); a lower bound on log `p`(`x`)"
+    ),
+    "adversarial": (
+        "min_{`G`} max_{`D`} E[log `D`(`x`)] + E[log(1 − `D`(`G`(`z`)))], `G` the generator "
+        "turning noise `z` into samples, `D` the discriminator's probability that a sample "
+        "is real"
+    ),
+    "contrastive": (
+        "minimize −log [e^{`s`(`x`_{`i`}, `y`_{`i`})/`τ`} / Σ_{`j`} e^{`s`(`x`_{`i`}, "
+        "`y`_{`j`})/`τ`}], `s` the similarity of two encodings, `τ` a temperature: each "
+        "matched pair must score above the batch's mismatches"
+    ),
+    "likelihood": (
+        "maximize log `p`(`x`), the log probability the model gives each training example"
+    ),
+    "flow matching": (
+        "minimize ‖`v`(`x`_{`t`}, `t`) − (`x`_{1} − `x`_{0})‖², `v` the network's velocity, "
+        "`x`_{0} noise, `x`_{1} data, `x`_{`t`} = (1 − `t`)`x`_{0} + `t`·`x`_{1} the point "
+        "a fraction `t` of the way"
+    ),
+    "hebbian": (
+        "rule: set `w`_{`i``j`} = Σ_{`p`} `x`_{`i`}^{`p`} `x`_{`j`}^{`p`}, `w`_{`i``j`} the "
+        "weight between units `i` and `j`, `x`_{`i`}^{`p`} unit `i`'s value (±1) in stored "
+        "pattern `p`: units that agree get a stronger link"
+    ),
+    "competitive": (
+        "rule: `w`_{`k`} += `η`·`h`(`k`, `k`*)·(`x` − `w`_{`k`}), `w`_{`k`} unit `k`'s "
+        "weights, `k`* the unit closest to `x`, `η` a step size, `h` shrinking with "
+        "distance from `k`* on the map"
+    ),
+}
+
+
+def plain(text: str) -> str:
+    """Text without its markup: `k` (a variable, drawn in italics) reads as k, x_{t} as xt."""
+    out = str(text).replace("`", "")
+    while True:
+        new = re.sub(r"[_^]\{([^{}]*)\}", r"\1", out)
+        if new == out:
+            return out
+        out = new
+
+
+def prose_html(text: str) -> str:
+    """Prose as HTML: escaped, with each `variable` in italics and _{...} and ^{...} as sub- and
+    superscripts, as in the formulas."""
+    out = re.sub(r"`([^`]+)`", r"<i>\1</i>", html.escape(str(text), quote=False))
+    while True:
+        new = re.sub(r"_\{([^{}]*)\}", r"<sub>\1</sub>", out)
+        new = re.sub(r"\^\{([^{}]*)\}", r"<sup>\1</sup>", new)
+        if new == out:
+            return out
+        out = new
+
+
+def math_html(text: str) -> str:
+    """A formula line as HTML: escaped, with `x` in italics and _{...} and ^{...} as sub- and
+    superscripts (nested ones too, innermost first), labeled "Trains to:", or "Update rule:"
+    for a leading "rule:"."""
+    out = html.escape(text, quote=False)
+    out = re.sub(r"`([^`]+)`", r"<i>\1</i>", out)  # `x`: a variable, in italics
+    while True:
+        new = re.sub(r"_\{([^{}]*)\}", r"<sub>\1</sub>", out)
+        new = re.sub(r"\^\{([^{}]*)\}", r"<sup>\1</sup>", new)
+        if new == out:
+            break
+        out = new
+    out = out.replace("log <i>", "log\u00a0<i>")  # "log p(x)" never splits across lines
+    if out.startswith("rule: "):
+        return '<span class="k">Update rule:</span> ' + out[len("rule: ") :]
+    return '<span class="k">Trains to:</span> ' + out
+
 
 # --------------------------------------------------------------------------
 # Geometry model
@@ -236,6 +343,9 @@ class Diagram:
     groups: "OrderedDict[str, list]"
     segs: list = field(default_factory=list)
     dots: list = field(default_factory=list)
+    stems: list = field(
+        default_factory=list
+    )  # (start, end, opacity) stems drawn apart from a cell
 
 
 def fmt(v: float) -> str:
@@ -682,8 +792,47 @@ def arc(d: Diagram, a: dict):
 
 def loop(d: Diagram, lp: dict):
     """Return arrow, from a later cell back to an earlier one: an elbow with an arrowhead,
-    in its own style (the output is fed back in and the network runs again)."""
-    elbow(d, lp, "loop", True, "right")
+    in its own style (the output is fed back in and the network runs again). With
+    `whole: true`, the whole row of the `from` cell is fed back to the whole row of the `to`
+    cell instead (whole_loop)."""
+    if lp.get("whole"):
+        whole_loop(d, lp)
+    else:
+        elbow(d, lp, "loop", True, "right")
+
+
+FEED_LEN = 2 * STEM  # a line that feeds a whole row: from the cell's edge (less GAP), twice a stem
+
+
+def whole_loop(d: Diagram, lp: dict):
+    """The whole output row fed back to the whole input row, as the sampler does each step: a
+    line up from every output to a line above them, down the side (outside any skips), and
+    beneath the inputs, with an arrow up into each, FEED_LEN long like ViT's patch feed. The lines take the place of the rows' stems; each output keeps its stem past the top
+    line, since the result leaves on the last step."""
+    ka, kb = ref(d, lp["from"]), ref(d, lp["to"])
+    ga = next(g for g in d.groups.values() if ka in g)
+    gb = next(g for g in d.groups.values() if kb in g)
+    outs = sorted((d.cells[k] for k in ga), key=lambda c: c.x)
+    ins = sorted((d.cells[k] for k in gb), key=lambda c: c.x)
+    for c in outs + ins:
+        c.marks = False
+    y_top = min(c.y - extent(c, 0.0, -1.0) for c in outs) - GAP - FEED_LEN
+    y_bot = max(c.y + extent(c, 0.0, 1.0) for c in ins) + GAP + FEED_LEN
+    x_run = max(c.x for c in outs + ins) + REACH
+    skips = [x for s in d.segs if s.style == "skip" for x, _ in s.pts]
+    if skips and max(skips) > x_run - 6:
+        x_run = max(skips) + 8.0
+    path, samples = rounded_path(
+        [(outs[0].x, y_top), (x_run, y_top), (x_run, y_bot), (ins[0].x, y_bot)], BEND
+    )
+    d.segs.append(Seg("loop", samples, d=path, near=tuple(ga) + tuple(gb)))
+    for c in outs:
+        bot = c.y - extent(c, 0.0, -1.0) - GAP
+        d.segs.append(Seg("loop", [(c.x, bot), (c.x, y_top)], ends=(c.key,), opacity=c.opacity))
+        d.stems.append(((c.x, y_top - MARK_GAP), (c.x, y_top - MARK_GAP - STEM), c.opacity))
+    for c in ins:
+        top = c.y + extent(c, 0.0, 1.0) + GAP
+        d.segs.append(Seg("loop", [(c.x, y_bot), (c.x, top)], ends=(c.key,), arrow=True))
 
 
 def anchor(d: Diagram, key: str, toward) -> tuple:
@@ -764,7 +913,7 @@ def feed(d: Diagram, fd: dict):
     x1 = row[-1].x + fd.get("past", 0.0)
     branches = fd.get("branches", False)  # a short arrow up from the line into each cell
     if branches:
-        y = max(c.y for c in row) + fd.get("below", R + 14.0)
+        y = max(c.y + extent(c, 0.0, 1.0) for c in row) + GAP + FEED_LEN
     d.segs.append(
         Seg(
             fd.get("style", "state"),
@@ -864,9 +1013,14 @@ def seg_seg_dist(p, q, a, b) -> float:
 _FONT_FILES = {}
 
 
-def text_width(text: str, role: str, size: float, weight: int = 400) -> float:
+def text_width(
+    text: str, role: str, size: float, weight: int = 400, italic: bool = False
+) -> float:
     """Measure with the real font when Pillow and the font are available."""
+    text = plain(text)  # a `variable`'s backticks are markup, not ink
     style = {300: "Light", 400: "Regular", 500: "Medium", 700: "Bold"}[weight]
+    if italic:
+        style = "Italic" if style == "Regular" else style + " Italic"
     key = (role, style)
     if key not in _FONT_FILES:
         path = None
@@ -949,6 +1103,12 @@ def notice_text(doc: dict) -> str:
     return notice(doc) + (f" · {lic['text']}" if lic else "")
 
 
+def panel_credit(doc: dict) -> str:
+    """The credit a downloaded diagram carries: the guide, its copyright and license, and repo."""
+    repo = doc.get("repo")
+    return f"From the {doc['title']}. {notice_text(doc)}" + (f". {repo['url']}" if repo else "")
+
+
 MARKERS = "¹²³⁴⁵⁶⁷⁸⁹"  # footnote markers, in poster order
 
 
@@ -1015,6 +1175,9 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
     for aid in arch:
         if placed.count(aid) != 1:
             warns.append(f"{aid}: appears {placed.count(aid)} times in sections (expected once)")
+    for o in OBJECTIVES:
+        if o not in OBJECTIVE_MATH:
+            warns.append(f"objective '{o}' has no formula in OBJECTIVE_MATH")
     notes = footnotes(doc)
     if len(notes) > len(MARKERS):
         warns.append(f"{len(notes)} footnotes, but there are only {len(MARKERS)} markers")
@@ -1022,6 +1185,44 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
         for key in ("name", "year", "caption", "objective", "summary", "papers"):
             if not a.get(key):
                 warns.append(f"{aid}: missing '{key}'")
+        home = next((s["id"] for s in doc["sections"] if aid in s["panels"]), None)
+        for f in a.get("also", []):
+            if f not in {s["id"] for s in doc["sections"]}:
+                warns.append(f"{aid}: also lists unknown family '{f}'")
+            elif f == home:
+                warns.append(f"{aid}: also lists its own family '{f}'")
+        linked = {}
+        for rel, targets in (a.get("related") or {}).items():
+            for t in targets:
+                linked.setdefault(t, []).append(rel)
+        for t, rels in linked.items():
+            if len(rels) > 1:
+                warns.append(
+                    f"{aid}: related names '{t}' under more than one relation ({', '.join(rels)})"
+                )
+        for rel, targets in (a.get("related") or {}).items():
+            if rel not in RELATIONS:
+                warns.append(f"{aid}: related has unknown relation '{rel}'")
+            for t in targets:
+                if t not in arch:
+                    warns.append(f"{aid}: related {rel} names unknown architecture '{t}'")
+                elif t == aid:
+                    warns.append(f"{aid}: related {rel} names itself")
+        for o in a.get("also_objectives", []):
+            if o not in OBJECTIVES:
+                warns.append(
+                    f"{aid}: also_objectives lists '{o}', which is not one of {OBJECTIVES}"
+                )
+            elif o == a.get("objective"):
+                warns.append(f"{aid}: also_objectives repeats its objective '{o}'")
+        for key in ("caption", "summary", "read", "note", "objective_note"):
+            if str(a.get(key) or "").count("`") % 2:
+                warns.append(f"{aid}: {key} has an unmatched backtick")
+            if re.search(r"[{}]", prose_html(a.get(key) or "")):
+                warns.append(f"{aid}: {key} has unmatched braces")
+        line = a.get("objective_math") or OBJECTIVE_MATH.get(a.get("objective"), "")
+        if line and re.search(r"[{}`]", math_html(line)):
+            warns.append(f"{aid}: objective formula has unmatched braces or backticks")
         if a.get("objective") not in OBJECTIVES:
             warns.append(f"{aid}: objective '{a.get('objective')}' is not one of {OBJECTIVES}")
         if (
@@ -1271,6 +1472,12 @@ def render_diagram(d: Diagram, marker_id: str, ink: str = "currentColor") -> str
         for c in d.cells.values():
             if c.kind == kind:
                 out.append(cell_svg(kind, c.x, c.y, c.opacity, ink, c.mark_dir, c.marks))
+    for p, q, op in d.stems:  # stems set apart from their cells, past a whole-row return line
+        fade = "" if op == 1 else f' opacity="{fmt(op)}"'
+        out.append(
+            f'<line x1="{fmt(p[0])}" y1="{fmt(p[1])}" x2="{fmt(q[0])}" y2="{fmt(q[1])}" '
+            f'stroke="{ink}" stroke-width="1.1" stroke-linecap="round"{fade}/>'
+        )
     return "".join(out)
 
 
@@ -1375,7 +1582,28 @@ def svg_text(x, y, s, role, size, ink, weight=400, opacity=1.0, anchor="start", 
         attrs += f' text-anchor="{anchor}"'
     if spacing:
         attrs += f' letter-spacing="{spacing}"'
-    return f"<text {attrs}>{html.escape(str(s))}</text>"
+    s = str(s)
+    if "`" not in s:
+        return f"<text {attrs}>{html.escape(s)}</text>"
+    # With a `variable` in it, the text is set as runs, each placed at its measured position:
+    # a renderer such as cairosvg misplaces an italic <tspan> inside centered text.
+    runs = [
+        (r[1:-1], True) if r.startswith("`") else (r, False)
+        for r in re.split(r"(`[^`]+`)", s)
+        if r
+    ]
+    widths = [text_width(t, role, size, weight, italic) for t, italic in runs]
+    total = sum(widths)
+    x0 = x - (total / 2 if anchor == "middle" else total if anchor == "end" else 0.0)
+    base = re.sub(r' text-anchor="[^"]*"', "", re.sub(r'^x="[^"]*" ', "", attrs))
+    out = []
+    for (t, italic), w in zip(runs, widths):
+        style = ' font-style="italic"' if italic else ""
+        out.append(
+            f'<text x="{fmt(x0)}" {base}{style} xml:space="preserve">{html.escape(t)}</text>'
+        )
+        x0 += w
+    return "".join(out)
 
 
 def type_text(x, y, s, role, font, ink, weight=400, **kw):
@@ -1577,6 +1805,21 @@ def pdf_text_boxes(pdf_path: str, texts: list) -> dict:
     return out
 
 
+def related_of(doc: dict, aid: str) -> list:
+    """The panels related to `aid`, from both ends: [{label, ids}], in RELATIONS order, each
+    relation's own label first and then its reverse, with the ids in poster order."""
+    arch = doc["architectures"]
+    order = [p for s in doc["sections"] for p in s["panels"]]
+    groups = []
+    for rel, (label, back) in RELATIONS.items():
+        fwd = (arch[aid].get("related") or {}).get(rel, [])
+        rev = [o for o in arch if aid in ((arch[o].get("related") or {}).get(rel, []))]
+        for lab, ids in ((label, fwd), (back, rev)):
+            if ids:
+                groups.append({"label": lab, "ids": sorted(ids, key=order.index)})
+    return groups
+
+
 def poster_svg(doc: dict, diagrams: dict, theme: str = "light") -> str:
     ink, bg = (INK_LIGHT, BG_LIGHT) if theme == "light" else (INK_DARK, BG_DARK)
     arch = doc["architectures"]
@@ -1595,7 +1838,21 @@ def poster_svg(doc: dict, diagrams: dict, theme: str = "light") -> str:
     parts.append(f'<g transform="translate(0,{fmt(y)})">{leg}</g>')
     y += leg_h + 40
     notes = footnotes(doc)
+    part = None
     for row in pack_rows(doc["sections"]):
+        head = row[0][0].get("part")
+        if head and head != part:  # a part opens: its label over a rule the full width
+            part = head
+            parts.append(
+                type_text(
+                    M, y + 14, doc["parts"][head].upper(), "part", "display", ink, 500, spacing=1.6
+                )
+            )
+            parts.append(
+                f'<line x1="{fmt(M)}" y1="{fmt(y + 26)}" x2="{fmt(width - M)}" y2="{fmt(y + 26)}" '
+                f'stroke="{ink}" stroke-opacity="0.5" stroke-width="1.5"/>'
+            )
+            y += 50
         for section, col0 in row:
             n = len(section["panels"])
             x0 = M + col0 * (W + GX)
@@ -1808,13 +2065,14 @@ body { background: var(--bg); color: var(--ink); font-family: var(--body); font-
 .lg-group { min-width: 0; }
 .lg-title { font-family: var(--display); font-weight: 500; font-size: 14px; margin: 0 0 4px; }
 .lg-group ul, .d-key ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; align-content: start; }
+.d-key ul { gap: 8px; }  /* stacked cells' stems would otherwise nearly touch */
 .lg-group li, .d-key li { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.3; }
 .lg-group svg, .d-key svg { width: 26px; height: 26px; flex: none; overflow: visible; }
 /* the page's legend sits tighter than an explanation's key */
 .lg-group ul { gap: 0; }
 .lg-group li { line-height: 1.2; gap: 6px; white-space: nowrap; }   /* every label fits in Lato; a fallback font may run into the gap */
 .lg-group svg { width: 20px; height: 20px; }   /* leaves the longest label, Cross-attention, comparison, one line */
-.d-key { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px 14px; }
+.d-key { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 14px; }
 .filters { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg);
   border-bottom: 1px solid var(--rule); padding-block: 12px; display: flex; flex-wrap: wrap;
   gap: 10px 14px; align-items: center; }
@@ -1823,13 +2081,25 @@ body { background: var(--bg); color: var(--ink); font-family: var(--body); font-
   border: 1px solid var(--rule); border-radius: 8px; padding: 7px 10px; min-width: 0; }
 .controls input { width: 12rem; max-width: 100%; }
 .count { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+/* The pack toggle sits with the selects, before the search, so the count never moves it.
+   Pressed, sections take a row each instead of sharing rows as on the poster. */
+.controls .pack { width: 32px; height: 32px; border-radius: 8px; color: var(--ink); }
+.controls .pack[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); background: var(--rule); }
+.controls .pack svg { width: 16px; height: 16px; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .family { margin-top: 30px; }
+/* Sections share one column grid: a section shorter than a row spans just its cards (set by the
+   script), so short sections sit side by side as on the poster; longer ones take whole rows. */
+#groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); column-gap: 14px; }
+#groups > .family { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: subgrid;
+  align-content: start; }
+#groups > .family > * { grid-column: 1 / -1; min-width: 0; }
 .family h2 { font-family: var(--display); font-weight: 500; font-size: 12px; letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--muted); margin: 0; padding-bottom: 8px;
   border-bottom: 1px solid var(--rule); }
 .family h2.plain { text-transform: none; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 6px 14px; margin-top: 10px; }
+#groups .grid { grid-template-columns: subgrid; }
 .card { appearance: none; font: inherit; text-align: left; color: var(--ink); background: transparent;
   border: 1px solid transparent; border-radius: 10px; padding: 10px 10px 12px; cursor: pointer;
   display: grid; gap: 3px; align-content: start; min-width: 0; }
@@ -1850,9 +2120,21 @@ a.btn { display: inline-block; text-decoration: none; }
 footer { margin-top: 56px; border-top: 1px solid var(--rule); padding-top: 16px; color: var(--muted);
   font-size: 13px; display: grid; gap: 4px; }
 footer a { color: inherit; text-underline-offset: 2px; }
-dialog { border: 1px solid var(--rule); border-radius: 14px; padding: 0; width: min(940px, calc(100vw - 32px));
+dialog { border: 1px solid var(--rule); border-radius: 14px; padding: 0; width: min(1040px, calc(100vw - 32px));
   max-height: calc(100vh - 48px); max-height: calc(100dvh - 32px); overflow: auto; background: var(--bg);
-  color: var(--ink); }
+  color: var(--ink); clip-path: inset(0 round 14px); }
+/* clip-path rounds the scrollbar with the corners: a scrollbar that always shows (macOS's
+   setting, Windows) is otherwise drawn square across them */
+/* One height for every panel, so Previous and Next stay put: as tall as the window allows, up to
+   840px; a long panel scrolls inside, and the buttons sit at the bottom however short it is. The
+   gutter keeps room for a scrollbar that shows, so they do not shift sideways either. */
+dialog[open] { display: flex; flex-direction: column; scrollbar-gutter: stable; height: min(840px, calc(100vh - 48px));
+  height: min(840px, calc(100dvh - 32px)); }
+dialog[open] > .d-wrap { flex: 1 0 auto; grid-template-rows: 1fr auto; padding-bottom: 0; }
+/* A hairline between the drawing and its text, centered in the 28px gap and as tall as the text
+   column; across the top of the text instead when the popup is one column */
+dialog[open] .d-text { align-self: stretch; border-left: 1px solid var(--rule); margin-left: -14px; padding-left: 13px; }
+dialog[open] .d-nav { align-self: end; }
 dialog::backdrop { background: var(--scrim); }
 .d-wrap { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 28px; padding: 28px; }
 .d-side { min-width: 0; align-self: start; display: grid; gap: 14px; }
@@ -1860,16 +2142,32 @@ dialog::backdrop { background: var(--scrim); }
   text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
 .d-fig { min-width: 0; }
 .d-fig svg { width: 100%; height: auto; display: block; }
+/* Diagram actions, as in Vega-Lite: a quiet "⋯" at the top right of the side column, opening
+   a small menu to save the drawing or copy a link to it */
+.d-side { position: relative; }
+.d-more { position: absolute; top: -6px; right: 0; width: 30px; height: 30px; display: grid; place-items: center;
+  padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted);
+  cursor: pointer; }
+.d-more svg { width: 18px; height: 18px; fill: currentColor; }
+.d-more:hover, .d-more[aria-expanded="true"] { color: var(--ink); border-color: var(--rule); background: var(--bg); }
+.d-menu { position: absolute; top: 28px; right: 0; z-index: 2; display: grid; min-width: 150px; padding: 4px;
+  background: var(--bg); border: 1px solid var(--rule); border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14); }
+.d-menu button { appearance: none; border: 0; background: none; font: 14px var(--body); color: var(--ink);
+  text-align: left; padding: 8px 12px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.d-menu button:hover, .d-menu button:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent);
+  outline: none; }
 .d-text { min-width: 0; }
 .d-kicker { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0; }
-.d-text h2 { font-family: var(--display); font-weight: 500; font-size: 28px; line-height: 1.15; margin: 4px 0 2px; }
-.d-full { font-family: var(--display); font-size: 15px; margin: 0 0 2px; }
+.d-kicker .nw { white-space: nowrap; }
+.d-text h2 { font-family: var(--display); font-weight: 500; font-size: 28px; line-height: 1.15; margin: 12px 0 6px; }
+.d-full { font-family: var(--display); font-size: 15px; }
 /* .d-text p would zero these margins, so they are set with .d-text's weight */
-.d-text .d-cap { color: var(--muted); margin: 0 0 16px; }
-.d-text .d-note { font-size: 13px; color: var(--muted); margin: -10px 0 16px; max-width: 62ch; }
+.d-text .d-full { margin: 0 0 4px; }
+.d-text .d-cap { color: var(--muted); margin: 0 0 20px; }
+.d-text .d-note { font-size: 13px; color: var(--muted); margin: -12px 0 20px; max-width: 62ch; }
 #d-name:focus { outline: none; }
 .d-text h3 { font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: 0.13em;
-  text-transform: uppercase; color: var(--muted); margin: 18px 0 4px; }
+  text-transform: uppercase; color: var(--muted); margin: 20px 0 4px; }
 .d-text p { margin: 0; max-width: 62ch; }
 /* Papers as a reference list: authors (year). Title, linked. Where it appeared. No bullets;
    a hanging indent, and a quiet underline that darkens on hover. */
@@ -1879,12 +2177,33 @@ dialog::backdrop { background: var(--scrim); }
   text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 30%, transparent); }
 .d-papers a:hover { text-decoration-color: currentColor; }
 .d-papers .src { color: var(--muted); }
+/* The objective's formula, under its tag */
+.d-text .d-math { margin-top: 4px; font-size: 14px; line-height: 1.6; }
+.d-text sub, .d-text sup { font-size: 0.72em; line-height: 0; }  /* keep lines evenly spaced */
+.d-math .k { color: var(--muted); }
+.d-text i { padding-right: 0.07em; }  /* an italic letter leans into a parenthesis after it */
+/* Related: a muted label, then the panels as links that open them in place */
+.d-rel { display: grid; gap: 4px; }
+.d-rel .k { color: var(--muted); }
+.d-rel button { appearance: none; border: 0; padding: 0; background: none; font: inherit; color: inherit;
+  cursor: pointer; text-decoration-line: underline; text-decoration-thickness: 1px;
+  text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 30%, transparent); }
+.d-rel button:hover { text-decoration-color: currentColor; }
 /* The buttons stay at the bottom of the dialog while its content scrolls, on phones especially */
 .d-nav { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; border-top: 1px solid var(--rule);
   position: sticky; bottom: 0; background: var(--bg); padding: 14px 0 calc(14px + env(safe-area-inset-bottom, 0px)); }
+/* When more of the panel lies below, a short fade above the buttons: the cut-off line fades out
+   instead of being sliced, and the fade says there is more; it goes once the end is reached */
+.d-nav::before { content: ""; position: absolute; left: 0; right: 0; bottom: calc(100% + 1px); height: 28px;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 0%, transparent), var(--bg));
+  pointer-events: none; opacity: 0; transition: opacity 0.15s; }
+dialog.more .d-nav::before { opacity: 1; }
+dialog.instant .d-nav::before { transition: none; }  /* set at once when a panel opens */
 @media (max-width: 760px) {
   .titlebar .save { order: 3; flex-basis: 100%; margin-top: 0; }
   .d-wrap { grid-template-columns: 1fr; padding: 20px; gap: 16px; }
+  dialog[open] > .d-wrap { grid-template-rows: auto auto 1fr; padding-bottom: 0; }
+  dialog[open] .d-text { border-left: 0; margin-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 16px; }
   .controls { margin-left: 0; }
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -1895,6 +2214,96 @@ dialog::backdrop { background: var(--scrim); }
 PAGE_JS = r"""
 (() => {
   const DATA = JSON.parse(document.getElementById('guide-data').textContent);
+  // Download a diagram: the drawing in its card, as a standalone SVG like dist/panels/<id>.svg,
+  // in the poster's ink and with the guide's credit. A plain page saves through a link; on
+  // claude.ai the poster's downloads capability sets saveFile once it is granted.
+  const dlBtn = document.getElementById('d-more');  // carries the credit and ink for the file
+  let saveFile = null;
+  if ((document.getElementById('save') || {}).dataset?.mode === 'standalone') {
+    saveFile = async (name, blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+  }
+  function panelFile(id) {
+    const svg = document.querySelector('.card[data-id="' + id + '"] svg').outerHTML;
+    const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const head = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="$1" width="$2" height="$3" role="img">' +
+      '<title>' + esc(DATA[id].name) + '</title><desc>' + esc(dlBtn.dataset.credit) + '</desc>';
+    const body = svg
+      .replace(/^<svg viewBox="(0 0 ([\d.]+) ([\d.]+))"[^>]*>/, (m, vb, w, h) =>
+        head.replace('$1', vb).replace('$2', 2 * w).replace('$3', 2 * h))
+      .split('currentColor').join(dlBtn.dataset.ink);
+    return new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + body], { type: 'image/svg+xml' });
+  }
+  // The drawing as a PNG: the SVG drawn on a white canvas at four times the panel's size
+  function panelPng(id) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(panelFile(id));
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth * 2;  // the file is drawn at 2x, so 4x of the panel
+        c.height = img.naturalHeight * 2;
+        const g = c.getContext('2d');
+        g.fillStyle = '#FFFFFF';
+        g.fillRect(0, 0, c.width, c.height);
+        g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        c.toBlob(b => (b ? resolve(b) : reject(new Error('png'))), 'image/png');
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('svg')); };
+      img.src = url;
+    });
+  }
+  const menu = document.getElementById('d-menu');
+  const standalone = (document.getElementById('save') || {}).dataset?.mode === 'standalone';
+  function setMenu(open) {
+    menu.hidden = !open;
+    dlBtn.setAttribute('aria-expanded', String(open));
+    if (open) (menu.querySelector('button:not([hidden])') || dlBtn).focus();
+  }
+  // which actions this page can offer: saving needs saveFile, a link needs a real address
+  function refreshMenu() {
+    menu.querySelectorAll('[data-act="svg"], [data-act="png"]').forEach(b => { b.hidden = !saveFile; });
+    menu.querySelector('[data-act="link"]').hidden = !standalone;
+    dlBtn.hidden = !menu.querySelector('button:not([hidden])');
+  }
+  dlBtn.addEventListener('click', () => setMenu(menu.hidden));
+  menu.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-act]');
+    if (!b || !current) return;
+    const id = current, base = 'neural-network-field-guide-' + id;
+    try {
+      if (b.dataset.act === 'svg') await saveFile(base + '.svg', panelFile(id));
+      if (b.dataset.act === 'png') await saveFile(base + '.png', await panelPng(id));
+      if (b.dataset.act === 'link') {
+        await navigator.clipboard.writeText(location.origin + location.pathname + '#' + id);
+        const label = b.textContent;
+        b.textContent = 'Link copied';
+        setTimeout(() => { b.textContent = label; }, 1500);
+        return;  // the menu stays open so the confirmation shows
+      }
+    } catch (err) {}
+    setMenu(false);
+  });
+  menu.addEventListener('keydown', e => {
+    const items = Array.from(menu.querySelectorAll('button:not([hidden])'));
+    const i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopPropagation();
+      items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.stopPropagation();  // not Previous/Next
+    if (e.key === 'Tab') setMenu(false);
+  });
   const SYMBOLS = JSON.parse(document.getElementById('guide-symbols').textContent);
   const ORDER = Object.keys(DATA);
   const cards = Array.from(document.querySelectorAll('.card'));
@@ -1915,19 +2324,50 @@ PAGE_JS = r"""
     return Array.from(groupsEl.querySelectorAll('.card')).filter(c => !c.hidden).map(c => c.dataset.id);
   }
 
+  // A section with fewer cards than a row has columns spans only those, so the next can join it.
+  // Columns that fit, as the grid's repeat(auto-fill, minmax(176px, 1fr)) with a 14px gap lays them
+  // out; read from the width, since a span left from a wider layout adds implicit columns.
+  const colsNow = () => Math.max(1, Math.floor((groupsEl.clientWidth + 14) / (176 + 14)));
+  // The toggle turns packing off, one section per row; it is hidden where nothing could pair.
+  const packBtn = document.getElementById('f-pack');
+  let packOn = true;
+  try { packOn = localStorage.getItem('field-guide-pack') !== 'off'; } catch (e) {}
+  packBtn.setAttribute('aria-pressed', String(!packOn));
+  packBtn.addEventListener('click', () => {
+    packOn = !packOn;
+    packBtn.setAttribute('aria-pressed', String(!packOn));
+    try { localStorage.setItem('field-guide-pack', packOn ? 'on' : 'off'); } catch (e) {}
+    pack();
+  });
+  function pack() {
+    const cols = colsNow();
+    packBtn.hidden = cols < 3;
+    for (const s of sections) {
+      const n = s.querySelectorAll('.card:not([hidden])').length;
+      s.style.gridColumn = packOn && n && n < cols ? 'span ' + n : '';
+    }
+  }
+  let packCols = 0;
+  window.addEventListener('resize', () => {
+    const cols = colsNow();
+    if (cols !== packCols) { packCols = cols; pack(); }
+  });
+
   function apply() {
     const term = search.value.trim().toLowerCase();
     const obj = objSel.value;
     let shown = 0;
     for (const c of cards) {
       const d = DATA[c.dataset.id];
-      const ok = (family === 'all' || d.family === family) && (obj === 'all' || d.objective === obj) &&
+      const ok = (family === 'all' || d.family === family || d.also.includes(family)) &&
+        (obj === 'all' || d.objective === obj || d.alsoObjectives.includes(obj)) &&
         (!term || d.search.includes(term));
       c.hidden = !ok;
       if (ok) shown++;
     }
     for (const s of sections) s.hidden = !s.querySelector('.card:not([hidden])');
-    count.textContent = shown + (shown === 1 ? ' architecture' : ' architectures');
+    pack();
+    count.textContent = shown + (shown === 1 ? ' diagram' : ' diagrams');
     empty.hidden = shown > 0;
   }
 
@@ -2024,17 +2464,29 @@ PAGE_JS = r"""
     current = id;
     const svg = card.querySelector('svg').outerHTML.split('arr-' + id).join('arr-' + id + '-big');
     document.getElementById('d-fig').innerHTML = svg;
-    setText('d-kicker', d.familyTitle + ' · ' + d.year);
+    // Family, any further families, then the year; a line breaks only between names.
+    const kicker = document.getElementById('d-kicker');
+    const keep = t => { const s = document.createElement('span'); s.className = 'nw'; s.textContent = t; return s; };
+    const also = d.alsoTitles.map((t, i) => (i ? '' : 'also ') + t + (i < d.alsoTitles.length - 1 ? ',' : ''));
+    kicker.replaceChildren();
+    [d.familyTitle, ...also, String(d.year)].forEach((t, i, all) => {
+      kicker.append(keep(t));
+      if (i < all.length - 1) kicker.append(i === 0 || i === all.length - 2 ? ' · ' : ' ');
+    });
     setText('d-name', d.name);
     setText('d-full', d.full);
     document.getElementById('d-full').hidden = !d.full;
-    setText('d-cap', d.caption);
+    document.getElementById('d-cap').innerHTML = d.captionHtml;  // escaped by guide.py
     setText('d-note', d.note);
     document.getElementById('d-note').hidden = !d.note;
-    setText('d-summary', d.summary);
-    setText('d-read', d.read);
-    setText('d-objective', d.objective + (d.objectiveNote ? ', ' + d.objectiveNote : ''));
+    document.getElementById('d-summary').innerHTML = d.summaryHtml;
+    document.getElementById('d-read').innerHTML = d.readHtml;
+    setText('d-objective', d.objective + (d.objectiveNote ? ', ' + d.objectiveNote : '') +
+      (d.alsoObjectives.length ? '; also ' + d.alsoObjectives.join(', ') : ''));
     document.getElementById('d-read-wrap').hidden = !d.read;
+    setMenu(false);
+    refreshMenu();
+    document.getElementById('d-math').innerHTML = d.objectiveMath;  // built and escaped by guide.py
     // the key: only the cells and links this diagram uses
     const key = document.getElementById('d-key');
     key.textContent = '';
@@ -2052,6 +2504,25 @@ PAGE_JS = r"""
       }
       key.append(col);
     }
+    // Related panels, each a link that opens it here
+    const rel = document.getElementById('d-rel');
+    rel.textContent = '';
+    for (const g of d.related) {
+      const row = document.createElement('p');
+      const k = document.createElement('span');
+      k.className = 'k';
+      k.textContent = g.label + ':';
+      row.append(k);
+      g.ids.forEach((rid, i) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = DATA[rid].name;
+        b.addEventListener('click', () => open(rid));
+        row.append(i ? ', ' : ' ', b);
+      });
+      rel.append(row);
+    }
+    document.getElementById('d-rel-wrap').hidden = !d.related.length;
     const ul = document.getElementById('d-papers');
     ul.textContent = '';
     for (const p of d.papers) {
@@ -2076,6 +2547,9 @@ PAGE_JS = r"""
       document.getElementById('d-name').focus({ preventScroll: true });
     }
     dlg.scrollTop = 0;  // every architecture opens at its top
+    dlg.classList.add('instant');  // the fade only eases in while scrolling
+    moreBelow();
+    requestAnimationFrame(() => requestAnimationFrame(() => dlg.classList.remove('instant')));
     try { history.replaceState(null, '', '#' + id); } catch (e) {}
   }
 
@@ -2096,6 +2570,21 @@ PAGE_JS = r"""
     if (card) card.focus();
   });
   dlg.addEventListener('click', e => { if (e.target === dlg) close(); });
+  // the fade above the buttons shows while more of the panel lies below
+  function moreBelow() {
+    dlg.classList.toggle('more', dlg.scrollTop + dlg.clientHeight < dlg.scrollHeight - 2);
+  }
+  dlg.addEventListener('scroll', moreBelow, { passive: true });
+  window.addEventListener('resize', () => { if (dlg.open) moreBelow(); });
+  dlg.addEventListener('cancel', e => {
+    if (!menu.hidden) { e.preventDefault(); setMenu(false); dlBtn.focus(); }
+  });
+  dlg.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !menu.hidden) { e.preventDefault(); e.stopPropagation(); setMenu(false); dlBtn.focus(); }
+  }, true);
+  dlg.addEventListener('pointerdown', e => {
+    if (!menu.hidden && !menu.contains(e.target) && !dlBtn.contains(e.target)) setMenu(false);
+  });
   dlg.addEventListener('keydown', e => {
     if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
     if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
@@ -2148,6 +2637,15 @@ PAGE_JS = r"""
     const declined = e => /cancel|declin|abort|denied|reject|not_granted/i.test(codeOf(e));
     const malformed = e => /invalid|type|argument|unsupported/i.test(codeOf(e));
     box.hidden = false;
+    saveFile = async (name, blob) => {
+      try {
+        await downloads.save({ filename: name, data: blob });
+      } catch (e) {
+        if (declined(e) || !malformed(e)) throw e;
+        await downloads.save({ filename: name, data: new Uint8Array(await blob.arrayBuffer()) });
+      }
+    };
+    refreshMenu();
     box.querySelectorAll('button[data-file]').forEach(btn => btn.addEventListener('click', async () => {
       const name = btn.dataset.name;
       status.textContent = 'Preparing ' + name + '…';
@@ -2381,7 +2879,7 @@ PREVIEW_PANELS = [
 def preview_svg(doc: dict, diagrams: dict) -> str:
     """The link preview: the title and subtitle over twelve of the panels, in two rows."""
     pw, ph = PREVIEW_SIZE
-    m, cols, gap, ink = 56, 6, 8, INK_LIGHT
+    m, cols, gap, row_gap, ink = 56, 6, 8, 28, INK_LIGHT  # rows apart, so stems don't meet
     sub = 22
     while text_width(doc["subtitle"], "body", sub) > pw - 2 * m and sub > 14:
         sub -= 1
@@ -2392,7 +2890,7 @@ def preview_svg(doc: dict, diagrams: dict) -> str:
         svg_text(m, 156, doc["subtitle"], "body", sub, ink, 400, TYPE["subtitle"][1] * 0.75),
     ]
     for i, aid in enumerate(PREVIEW_PANELS):
-        x, y = m + (i % cols) * (W * scale + gap), 210 + (i // cols) * (H * scale + gap)
+        x, y = m + (i % cols) * (W * scale + gap), 210 + (i // cols) * (H * scale + row_gap)
         parts.append(
             f'<g transform="translate({fmt(x)} {fmt(y)}) scale({scale:.4f})">'
             f'{render_diagram(diagrams[aid], "arr-preview", ink)}</g>'
@@ -2455,6 +2953,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
     """mode='artifact': a fragment for publishing; mode='standalone': a complete HTML file."""
     arch = doc["architectures"]
     fam_of = {p: s for s in doc["sections"] for p in s["panels"]}
+    titles = {s["id"]: s["title"] for s in doc["sections"]}
     notes = footnotes(doc)
     data = OrderedDict()
     sections_html = []
@@ -2472,7 +2971,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 f'<button class="card" type="button" data-id="{pid}">{svg}'
                 f'<span class="row"><span class="name">{html.escape(a["name"])}</span>'
                 f'<span class="year">{a["year"]}</span></span>'
-                f'<span class="cap">{html.escape(caption)}</span>'
+                f'<span class="cap">{prose_html(caption)}</span>'
                 f'<span class="tag">{html.escape(a["objective"])}</span></button>'
             )
             papers = [dict(paper_ref(p), title=p["title"], url=p["url"]) for p in a["papers"]]
@@ -2484,9 +2983,12 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                     a["summary"],
                     str(a["year"]),
                     a["objective"],
+                    *a.get("also_objectives", []),
                     s["title"],
+                    *(titles[f] for f in a.get("also", [])),
                 ]
-            ).lower()
+            )
+            text = plain(text).lower()
             used_cells = {c.kind for c in d.cells.values()}
             used_links = {s.style for s in d.segs}
             data[pid] = dict(
@@ -2495,12 +2997,20 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 year=a["year"],
                 family=fam_of[pid]["id"],
                 familyTitle=fam_of[pid]["title"],
-                caption=caption,
+                also=a.get("also", []),
+                alsoTitles=[titles[f] for f in a.get("also", [])],
+                caption=plain(caption),
+                captionHtml=prose_html(caption),
                 objective=a["objective"],
                 objectiveNote=a.get("objective_note", ""),
+                objectiveMath=math_html(a.get("objective_math") or OBJECTIVE_MATH[a["objective"]]),
+                alsoObjectives=a.get("also_objectives", []),
+                related=related_of(doc, pid),
                 note=" ".join(notes[pid]) if pid in notes else "",
-                summary=a["summary"].strip(),
-                read=a.get("read", "").strip(),
+                summary=plain(a["summary"].strip()),
+                summaryHtml=prose_html(a["summary"].strip()),
+                read=plain(a.get("read", "").strip()),
+                readHtml=prose_html(a.get("read", "").strip()),
                 papers=papers,
                 search=text,
                 key=dict(
@@ -2538,18 +3048,19 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <p class="reading">{html.escape(doc["reading"])} Select a diagram for its explanation, key, and papers.</p></div>
 {legend_html(cells, links)}
 </header>
-<nav class="filters" aria-label="Filter architectures">
+<nav class="filters" aria-label="Filter diagrams">
 <div class="controls">
 <select id="f-family" aria-label="Family">{families}</select>
 <select id="f-order" aria-label="Order">{ORDER_OPTIONS}</select>
 <select id="f-objective" aria-label="Training objective">{options}</select>
-<input id="f-search" type="search" placeholder="Search, e.g. memory" aria-label="Search architectures">
+<button class="icon-btn pack" type="button" id="f-pack" aria-pressed="false" aria-label="One section per row" title="One section per row"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3.5" width="18" height="4.5" rx="1.2"/><rect x="3" y="9.75" width="18" height="4.5" rx="1.2"/><rect x="3" y="16" width="18" height="4.5" rx="1.2"/></svg></button>
+<input id="f-search" type="search" placeholder="Search, e.g. memory" aria-label="Search diagrams">
 <span class="count" id="f-count" aria-live="polite"></span>
 </div>
 </nav>
 <main>
 <div id="groups">{"".join(sections_html)}</div>
-<div class="empty" id="empty" hidden><span>No architectures match these filters.</span>
+<div class="empty" id="empty" hidden><span>No diagrams match these filters.</span>
 <button class="btn" type="button" id="clear">Clear filters</button></div>
 </main>
 <footer><span>{credit_html(doc)}</span><span>{html.escape(notice(doc))}{license_html(doc)}{repo_html(doc)} · Last updated <time datetime="{updated_date(doc).isoformat()}">{date_text(updated_date(doc))}</time></span></footer>
@@ -2559,6 +3070,12 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <div class="d-side">
 <div class="d-keybox"><h3 class="d-label">Key</h3><div class="d-key" id="d-key"></div></div>
 <div class="d-fig" id="d-fig"></div>
+<button class="d-more" type="button" id="d-more" aria-label="Diagram actions" title="Diagram actions" aria-haspopup="menu" aria-expanded="false" aria-controls="d-menu" data-credit="{html.escape(panel_credit(doc))}" data-ink="{INK_LIGHT}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+<div class="d-menu" id="d-menu" role="menu" aria-label="Diagram actions" hidden>
+<button type="button" role="menuitem" data-act="link">Copy link</button>
+<button type="button" role="menuitem" data-act="svg">Save as SVG</button>
+<button type="button" role="menuitem" data-act="png">Save as PNG</button>
+</div>
 </div>
 <div class="d-text">
 <p class="d-kicker" id="d-kicker"></p>
@@ -2568,7 +3085,8 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <p class="d-note" id="d-note" hidden></p>
 <p id="d-summary"></p>
 <div id="d-read-wrap"><h3>Reading the diagram</h3><p id="d-read"></p></div>
-<h3>Objective</h3><p id="d-objective"></p>
+<div id="d-rel-wrap"><h3>Related</h3><div class="d-rel" id="d-rel"></div></div>
+<h3>Objective</h3><p id="d-objective"></p><p class="d-math" id="d-math"></p>
 <h3>Papers</h3><ul class="d-papers" id="d-papers"></ul>
 </div>
 <div class="d-nav"><button class="btn" type="button" id="d-prev">Previous</button>

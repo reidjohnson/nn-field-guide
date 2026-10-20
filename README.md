@@ -1,10 +1,10 @@
 # Neural Network Field Guide
 
-[![The Neural Network Field Guide: twelve of its 42 diagrams under the title](dist/web/preview.png)](https://reidjohnson.github.io/nn-field-guide/)
+[![The Neural Network Field Guide: twelve of its diagrams under the title](dist/web/preview.png)](https://reidjohnson.github.io/nn-field-guide/)
 
 **[See the guide](https://reidjohnson.github.io/nn-field-guide/)** · [Poster (PDF)](https://reidjohnson.github.io/nn-field-guide/neural-network-field-guide.pdf)
 
-A reference chart of 42 neural network architectures and training schemes, from the perceptron (1958) to diffusion LLMs (2025). Inspired by *The Neural Network Zoo*, it draws every network in miniature, with each cell's role shown by both a color and a mark, so it reads with or without color and for color-blind readers.
+A reference chart of neural network architectures and training schemes, from the perceptron (1958) to diffusion LLMs (2025). Inspired by *The Neural Network Zoo*, it draws every network in miniature, with each cell's role shown by both a color and a mark, so it reads with or without color and for color-blind readers.
 
 ## How to read it
 

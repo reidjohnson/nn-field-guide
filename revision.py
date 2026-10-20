@@ -96,7 +96,7 @@ def card(mod, doc, pid: str, side: str) -> str:
     return (
         f'<figure class="panel"><figcaption class="side">{side}</figcaption>'
         f'<p class="name">{html.escape(a["name"])}</p>{panel_svg(mod, d, f"arr-{pid}-{side.lower()}", a["name"])}'
-        f'<p class="cap">{html.escape(caption)}</p><p class="meta">{a["year"]} · {html.escape(a["objective"])}</p></figure>'
+        f'<p class="cap">{mod.prose_html(caption) if hasattr(mod, "prose_html") else html.escape(caption)}</p><p class="meta">{a["year"]} · {html.escape(a["objective"])}</p></figure>'
     )
 
 
