@@ -17,11 +17,11 @@ Each panel runs from input at the bottom to output at the top. A circle is one u
 | State: carries memory between steps | blue | an outer ring |
 | Mixing: mixes across positions | pink | a tick on each side |
 | Output: what the network produces | red | a stem above |
-| Network: a whole network in one box, any architecture (a generator, a denoiser, an expert) | dark gray, not a sixth hue (darker than every color, so it stays distinct in grayscale) | a tiny network inside a square, in white |
+| Network: a whole network, any architecture (e.g., a generator, a denoiser, an expert) | dark gray | a tiny network inside a square, in white |
 
 ## Building it
 
-Everything is drawn by `guide.py` from `architectures.yaml`, so the panels, the poster, and the page always match. It needs Python 3.10 or newer, and for exact PDF and PNG output the fonts Poppins, Lato 2.0 (from latofonts.com, for its Medium weight), and Noto Sans Mono.
+Everything is drawn by `guide.py` from `architectures.yaml`, so the panels, the poster, and the page always match; the page's stylesheet and script are in `assets/`, inlined into the page at build time. It needs Python 3.10 or newer, and for exact PDF and PNG output the fonts Poppins, Lato 2.0 (from latofonts.com, for its Medium weight), and Noto Sans Mono.
 
 ```sh
 pip install -r requirements.txt

@@ -1,0 +1,317 @@
+/* Layout: a specimen catalogue. Masthead with poster downloads and a legend grouped by
+   color, a sticky filter bar, then one labelled grid per family. Diagrams carry the page. */
+:root {
+  --bg: #FFFFFF; --surface: #F4F4F1; --ink: #1C1B19; --muted: #66655F;
+  --rule: #E3E2DD; --focus: #0077CC; --chip-on-bg: #1C1B19; --chip-on-ink: #FFFFFF;
+  --scrim: rgba(28, 27, 25, 0.5);
+  --display: 'Poppins', 'Avenir Next', 'Segoe UI', Helvetica, Arial, sans-serif;
+  --body: 'Lato', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: 'Noto Sans Mono', ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --surface: #1F1F1D; --ink: #ECEBE6; --muted: #A3A19A;
+    --rule: #302F2C; --focus: #4DB8FF; --chip-on-bg: #ECEBE6; --chip-on-ink: #141413;
+    --scrim: rgba(0, 0, 0, 0.62); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141413; --surface: #1F1F1D; --ink: #ECEBE6; --muted: #A3A19A;
+  --rule: #302F2C; --focus: #4DB8FF; --chip-on-bg: #ECEBE6; --chip-on-ink: #141413;
+  --scrim: rgba(0, 0, 0, 0.62); color-scheme: dark;
+}
+:root[data-theme="light"] { color-scheme: light; }
+[hidden] { display: none !important; }
+.icon-btn { display: inline-grid; place-items: center; box-sizing: border-box; width: 40px; height: 40px;
+  padding: 0; text-decoration: none; border-radius: 10px; border: 1px solid var(--rule);
+  background: var(--bg); color: var(--ink); cursor: pointer; }
+.icon-btn:hover { border-color: var(--muted); }
+.icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; }
+/* The icon shows the theme a click switches to: a moon on light, a sun on dark. */
+.icon-btn .i-sun { display: none; }
+:root[data-theme="dark"] .icon-btn .i-sun { display: block; }
+:root[data-theme="dark"] .icon-btn .i-moon { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .icon-btn .i-sun { display: block; }
+  :root:not([data-theme="light"]) .icon-btn .i-moon { display: none; }
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55; margin: 0; }
+.page { max-width: 1240px; margin: 0 auto; box-sizing: border-box;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 56px; }
+.masthead { --title-size: clamp(30px, 5.2vw, 48px); display: grid; gap: 12px; margin-bottom: 22px; }
+.masthead h1 { font-family: var(--display); font-weight: 500; font-size: var(--title-size);
+  line-height: 1.06; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+/* The title and the theme button share a row; the button sits centered on the title's first line. */
+/* The title row: the title, then the poster's save buttons and the theme button, both
+   centered on the title's first line. On a phone the save buttons drop below the title. */
+.titlebar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; }
+.titlebar h1 { flex: 1; min-width: 0; }
+.titlebar .icon-btn, .titlebar .save { margin-top: calc((var(--title-size) * 1.06 - 40px) / 2); }
+/* As on the poster: the subtitle on one line where the page is wide enough, and the reading
+   text across the full width, balanced like the poster's (guide.POSTER_TEXT of the column). */
+.lede { margin: 0; font-size: 20px; line-height: 1.4; text-wrap: balance; }
+.reading { max-width: 94%; margin: 12px 0 0; color: var(--muted); text-wrap: balance; }
+.eyebrow { font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: 0.13em;
+  text-transform: uppercase; color: var(--muted); }
+/* The poster's files, in a menu under one button, so the title bar stays short; on a phone
+   the button keeps only its icon */
+.save { position: relative; }
+.pm-btn { display: inline-flex; align-items: center; gap: 6px; box-sizing: border-box; height: 40px;
+  padding: 0 10px 0 12px; border-radius: 10px; border: 1px solid var(--rule); background: var(--bg);
+  color: var(--ink); cursor: pointer; font: 500 13px/1 var(--display); }
+.pm-btn:hover, .pm-btn[aria-expanded="true"] { border-color: var(--muted); }
+.pm-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; }
+.pm-btn .i-chev { width: 14px; height: 14px; color: var(--muted); }
+.d-menu.pm-menu { top: 46px; left: 0; right: auto; min-width: 170px; }
+.pm-menu a, .pm-menu button { display: flex; justify-content: space-between; gap: 16px; font: 14px var(--body);
+  color: var(--ink); text-decoration: none; text-align: left; padding: 8px 12px; border-radius: 6px;
+  white-space: nowrap; }
+.pm-menu a:hover, .pm-menu a:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent);
+  outline: none; }
+.pm-menu span { color: var(--muted); font-size: 13px; }
+.save-status { position: absolute; top: 46px; right: 0; font-size: 13px; color: var(--muted);
+  white-space: nowrap; }
+.legend { margin-top: 8px; border-top: 1px solid var(--rule); padding-top: 12px; }
+.legend summary { cursor: pointer; width: max-content; }
+.legend-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px 14px; margin-top: 8px; }
+/* wide enough for all seven groups in one row: each column as wide as its labels, spread out */
+@media (min-width: 1200px) { .legend-grid { grid-template-columns: repeat(7, auto); justify-content: space-between; } }
+.lg-group { min-width: 0; }
+.lg-title { font-family: var(--display); font-weight: 500; font-size: 14px; margin: 0 0 4px; }
+.lg-group ul, .d-key ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; align-content: start; }
+.d-key ul { gap: 8px; }  /* stacked cells' stems would otherwise nearly touch */
+.lg-group li, .d-key li { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.3; }
+.lg-group svg, .d-key svg { width: 26px; height: 26px; flex: none; overflow: visible; }
+/* the page's legend sits tighter than an explanation's key */
+.lg-group ul { gap: 0; }
+.lg-group li { line-height: 1.2; gap: 6px; white-space: nowrap; }   /* every label fits in Lato; a fallback font may run into the gap */
+.lg-group svg { width: 20px; height: 20px; }   /* leaves the longest label, Cross-attention, comparison, one line */
+.d-key { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 14px; }
+.filters { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg);
+  border-bottom: 1px solid var(--rule); padding-block: 12px; display: flex; flex-wrap: wrap;
+  gap: 10px 14px; align-items: center; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.controls select, .controls input { font: 14px var(--body); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--rule); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+.controls input { width: 12rem; max-width: 100%; }
+.count { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+/* The pack toggle sits with the selects, before the search, so the count never moves it.
+   Pressed, sections take a row each instead of sharing rows as on the poster. */
+.controls .pack { width: 32px; height: 32px; border-radius: 8px; color: var(--ink); }
+.controls .pack[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); background: var(--rule); }
+.controls .pack svg { width: 16px; height: 16px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.family { margin-top: 30px; }
+/* Sections share one column grid: a section shorter than a row spans just its cards (set by the
+   script), so short sections sit side by side as on the poster; longer ones take whole rows. */
+#groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); column-gap: 14px; }
+#groups > .family { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: subgrid;
+  align-content: start; }
+#groups > .family > * { grid-column: 1 / -1; min-width: 0; }
+.family h2 { font-family: var(--display); font-weight: 500; font-size: 12px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted); margin: 0; padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule); }
+.family h2.plain { text-transform: none; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 6px 14px; margin-top: 10px; }
+#groups .grid { grid-template-columns: subgrid; }
+.card { appearance: none; font: inherit; text-align: left; color: var(--ink); background: transparent;
+  border: 1px solid transparent; border-radius: 10px; padding: 10px 10px 12px; cursor: pointer;
+  display: grid; gap: 3px; align-content: start; min-width: 0; }
+.card:hover { background: var(--surface); border-color: var(--rule); }
+.card svg { width: 100%; height: auto; display: block; }
+.card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 6px; }
+.card .name { font-family: var(--display); font-size: 15px; font-weight: 500; line-height: 1.25; }
+.card .year { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.card .cap { font-size: 13px; color: var(--muted); line-height: 1.35; }
+.card .tag { justify-self: start; font-family: var(--mono); font-size: 11px; color: var(--muted);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; margin-top: 5px; }
+.empty { margin-top: 40px; color: var(--muted); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.btn { font: 500 13px/1 var(--display); padding: 9px 14px; border-radius: 8px; border: 1px solid var(--rule);
+  background: var(--bg); color: var(--ink); cursor: pointer; }
+.btn:hover { border-color: var(--muted); }
+.btn:disabled { opacity: 0.55; cursor: progress; }
+a.btn { display: inline-block; text-decoration: none; }
+footer { margin-top: 56px; border-top: 1px solid var(--rule); padding-top: 16px; color: var(--muted);
+  font-size: 13px; display: grid; gap: 4px; }
+footer a { color: inherit; text-underline-offset: 2px; }
+dialog { border: 1px solid var(--rule); border-radius: 14px; padding: 0; width: min(1080px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px); max-height: calc(100dvh - 32px); overflow: auto; background: var(--bg);
+  color: var(--ink); clip-path: inset(0 round 14px); }
+/* clip-path rounds the scrollbar with the corners: a scrollbar that always shows (macOS's
+   setting, Windows) is otherwise drawn square across them */
+/* One height for every panel, so Previous and Next stay put: as tall as the window allows, up to
+   920px; a long panel scrolls inside, and the buttons sit at the bottom however short it is. The
+   gutter keeps room for a scrollbar that shows, so they do not shift sideways either. */
+dialog[open] { display: flex; flex-direction: column; scrollbar-gutter: stable; height: min(920px, calc(100vh - 48px));
+  height: min(920px, calc(100dvh - 32px)); }
+dialog[open] > .d-wrap { flex: 1 0 auto; grid-template-rows: 1fr auto; padding-bottom: 0; }
+/* A hairline between the drawing and its text, centered in the 28px gap and as tall as the text
+   column; across the top of the text instead when the popup is one column */
+dialog[open] .d-text { align-self: stretch; border-left: 1px solid var(--rule); margin-left: -14px; padding-left: 13px; }
+dialog[open] .d-nav { align-self: end; }
+dialog::backdrop { background: var(--scrim); }
+/* The primer: a narrow reading column, as tall as a panel */
+dialog#primer { width: min(640px, calc(100vw - 32px)); }
+dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), scrolling inside */
+.p-wrap { padding: 28px 28px 8px; }
+.p-wrap h2 { font-family: var(--display); font-weight: 500; font-size: 24px; line-height: 1.2; margin: 0 0 4px; }
+.p-wrap h2:focus { outline: none; }
+/* the primer reads as a short article: its sections get real headings, a step above the key's
+   group names and below the title */
+.p-wrap h3 { font-family: var(--display); font-weight: 500; font-size: 18px; line-height: 1.3;
+  margin: 36px 0 8px; }
+.p-wrap p { margin: 0; max-width: 62ch; }
+.p-wrap p + p { margin-top: 1.55em; }  /* paragraphs within a section: a blank line between */
+.p-fig { margin: 6px 0 10px; }
+.p-fig svg { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; }
+/* The primer's live network: sliders for the inputs, the outputs' values, new weights */
+.p-live [data-c], .p-live [data-e] { transition: opacity 0.15s, stroke-width 0.15s; }
+.p-live { --rule-strong: #B9B7B0; }  /* a weight that subtracts: lighter than ink, in both themes */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .p-live { --rule-strong: #5E5C57; } }
+:root[data-theme="dark"] .p-live { --rule-strong: #5E5C57; }
+.p-live-ctl { display: grid; gap: 6px; max-width: 420px; margin: 8px auto 0; font-size: 14px; }
+.p-live-ctl label { display: grid; grid-template-columns: 4.5em 1fr 2.6em; align-items: center; gap: 10px; }
+.p-live-ctl span { color: var(--muted); }
+.p-live-ctl input[type="range"] { width: 100%; accent-color: var(--ink); }
+.p-live-ctl output { font: 13px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.p-outs { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 0; }
+.p-outs .p-out { text-align: left; }
+.p-new { margin-left: auto; appearance: none; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg);
+  color: var(--ink); font: 500 12px/1 var(--display); padding: 7px 10px; cursor: pointer; }
+.p-new:hover { border-color: var(--muted); }
+/* pointing at a unit or a line: it and what feeds it stay, the rest fades; the sum is spelled out */
+.p-live .p-hits * { stroke: transparent; stroke-width: 10; fill: none; pointer-events: stroke; }
+.p-live [data-c] { cursor: default; }
+.p-live.pointing [data-e]:not(.on), .p-live.pointing [data-c]:not(.on) > * { opacity: 0.18; }
+.p-read { min-height: 2.9em; margin: 4px 0 0; font: 13px/1.45 var(--mono); color: var(--muted); }
+.p-names text { font: 9px var(--body); fill: var(--muted); }
+.p-key { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; max-width: 62ch; }
+.p-key li { display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; }
+.p-key svg { width: 26px; height: 26px; overflow: visible; }
+.p-key b { font-weight: 700; }
+.p-keys { display: grid; gap: 14px; margin: 1.55em 0 12px; }
+.p-group h4 { margin: 0; font-size: 1rem; }
+.p-group > p { margin: 2px 0 8px; color: var(--muted); }
+.p-nav { display: flex; justify-content: flex-end; padding: 14px 28px 20px; position: sticky; bottom: 0;
+  background: var(--bg); border-top: 1px solid var(--rule); }
+/* the text gets the larger share, so the drawing keeps its size as the panel widens */
+.d-wrap { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 28px; padding: 28px; }
+.d-side { min-width: 0; align-self: start; display: grid; gap: 14px; }
+.d-label { font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: 0.13em;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+.d-fig { min-width: 0; }
+.d-fig svg { width: 100%; height: auto; display: block; }
+/* a key entry and the parts of the drawing it stands for light up together, and the rest
+   fades: a hover previews it, a click pins it */
+.d-fig [data-k], .d-key li, .card svg [data-k], .card, .legend li { transition: opacity 0.12s; }
+.d-key li[data-k], .legend li[data-k] { cursor: pointer; -webkit-user-select: none; user-select: none; }  /* shift-click selects, not text */
+.d-fig svg.hl [data-k]:not(.on), .card svg.hl [data-k]:not(.on) { opacity: 0.14; }
+.d-key.hl li:not(.on), .legend.hl li[data-k]:not(.on) { opacity: 0.35; }
+.card.lg-out { opacity: 0.3; }
+.d-key li, .legend li[data-k] { margin: -3px -6px; padding: 3px 6px; border-radius: 6px; }
+.d-key li:focus-visible, .legend li[data-k]:focus-visible { outline: 2px solid var(--ink); outline-offset: 0; }
+/* Step through: parts not reached yet fade, and light up in turn */
+.d-fig [data-s], .d-fig [data-on] { transition: opacity 0.25s; }
+.d-fig.flow [data-s].later, .d-fig.flow [data-on].later { opacity: 0.1; }
+.d-fig.flow [data-on].mid { opacity: 0.5; }  /* a hand-written step's cells read from */
+.d-fig.flow [data-on].past { opacity: 0.25; }  /* and cells lit in an earlier step */
+/* while stepping, a cell lights once the lines drawing in have reached it */
+.d-fig.flow [data-k^="cell:"]:not(.later):not(.mid):not(.past) { transition-delay: calc(var(--draw, 600ms) * 0.7); }
+/* the speed choices, one row in the drawing's menu */
+.d-speed { display: flex; align-items: center; gap: 2px; padding: 6px 8px 4px 12px; margin-top: 4px;
+  border-top: 1px solid var(--rule); font: 13px var(--body); color: var(--muted); }
+.d-speed[hidden] { display: none; }
+.d-speed span { margin-right: auto; padding-right: 10px; }
+.d-menu .d-speed button { padding: 5px 8px; font-size: 13px; color: var(--muted); }
+.d-menu .d-speed button[aria-checked="true"] { color: var(--ink); font-weight: 700; }
+/* The drawing's own line, labelled "Diagram" like the key's: its controls at the right. Step
+   through becomes Pause while it runs and Resume while paused, with a Stop square beside it
+   until it ends, and the "⋯" opens the drawing's menu */
+.d-tools { position: relative; display: flex; align-items: center; gap: 2px; margin: 6px 0 -6px; }
+.d-tools .d-label { margin: 0 auto 0 0; }
+.d-flowctl { display: flex; gap: 2px; }
+.d-flowctl[hidden] { display: none; }
+.d-play, .d-stop { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px 0 7px;
+  border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted);
+  cursor: pointer; font: 500 12px/1 var(--display); }
+.d-stop { width: 30px; padding: 0; justify-content: center; }
+.d-play:hover, .d-stop:hover, .d-flowctl:not([data-state="idle"]) .d-play { color: var(--ink);
+  border-color: var(--rule); background: var(--bg); }
+.d-play svg, .d-stop svg { width: 14px; height: 14px; fill: currentColor; }
+.d-flowctl[data-state="idle"] .d-stop { display: none; }
+.d-play .i-pause, .d-flowctl[data-state="run"] .d-play .i-play { display: none; }
+.d-flowctl[data-state="run"] .d-play .i-pause { display: block; }
+/* Diagram actions, as in Vega-Lite: a quiet "⋯", opening a small menu to save the drawing,
+   copy a link to it, or set the step-through's speed */
+.d-more { width: 30px; height: 30px; display: grid; place-items: center;
+  padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted);
+  cursor: pointer; }
+.d-more svg { width: 18px; height: 18px; fill: currentColor; }
+.d-more:hover, .d-more[aria-expanded="true"] { color: var(--ink); border-color: var(--rule); background: var(--bg); }
+.d-menu { position: absolute; top: 34px; right: 0; z-index: 2; display: grid; min-width: 150px; padding: 4px;
+  background: var(--bg); border: 1px solid var(--rule); border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14); }
+.d-menu button { appearance: none; border: 0; background: none; font: 14px var(--body); color: var(--ink);
+  text-align: left; padding: 8px 12px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.d-menu button:hover, .d-menu button:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent);
+  outline: none; }
+.d-text { min-width: 0; }
+.d-kicker { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0; }
+.d-kicker .nw { white-space: nowrap; }
+.d-text h2 { font-family: var(--display); font-weight: 500; font-size: 28px; line-height: 1.15; margin: 12px 0 6px; }
+.d-full { font-family: var(--display); font-size: 15px; }
+/* .d-text p would zero these margins, so they are set with .d-text's weight */
+.d-text .d-full { margin: 0 0 4px; }
+.d-text .d-cap { color: var(--muted); margin: 0 0 20px; }
+.d-text .d-note { font-size: 13px; color: var(--muted); margin: -12px 0 20px; max-width: 68ch; }
+#d-name:focus { outline: none; }
+.d-text h3 { font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: 0.13em;
+  text-transform: uppercase; color: var(--muted); margin: 20px 0 4px; }
+.d-text p { margin: 0; max-width: 68ch; }
+/* Papers as a reference list: authors (year). Title, linked. Where it appeared. No bullets;
+   a hanging indent, and a quiet underline that darkens on hover. */
+.d-papers { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-width: 62ch; }
+.d-papers li { padding-left: 1.5em; text-indent: -1.5em; }
+.d-papers a { color: inherit; text-decoration-line: underline; text-decoration-thickness: 1px;
+  text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 30%, transparent); }
+.d-papers a:hover { text-decoration-color: currentColor; }
+.d-papers .src { color: var(--muted); }
+/* The objective's formula, under its tag */
+.d-text .d-math { margin-top: 4px; font-size: 14px; line-height: 1.6; }
+.d-text sub, .d-text sup { font-size: 0.72em; line-height: 0; }  /* keep lines evenly spaced */
+.d-math .k { color: var(--muted); }
+.d-text i { padding-right: 0.07em; }  /* an italic letter leans into a parenthesis after it */
+/* Related: a muted label, then the panels as links that open them in place */
+.d-rel { display: grid; gap: 4px; }
+.d-rel .k { color: var(--muted); }
+.d-rel button { appearance: none; border: 0; padding: 0; background: none; font: inherit; color: inherit;
+  cursor: pointer; text-decoration-line: underline; text-decoration-thickness: 1px;
+  text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 30%, transparent); }
+.d-rel button:hover { text-decoration-color: currentColor; }
+/* The buttons stay at the bottom of the dialog while its content scrolls, on phones especially */
+.d-nav { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; border-top: 1px solid var(--rule);
+  position: sticky; bottom: 0; background: var(--bg); padding: 14px 0 calc(14px + env(safe-area-inset-bottom, 0px)); }
+/* When more of the panel lies below, a short fade above the buttons: the cut-off line fades out
+   instead of being sliced, and the fade says there is more; it goes once the end is reached */
+.d-nav::before, .p-nav::before { content: ""; position: absolute; left: 0; right: 0; bottom: calc(100% + 1px); height: 28px;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 0%, transparent), var(--bg));
+  pointer-events: none; opacity: 0; transition: opacity 0.15s; }
+dialog.more .d-nav::before, dialog.more .p-nav::before { opacity: 1; }
+dialog.instant .d-nav::before, dialog.instant .p-nav::before { transition: none; }  /* set at once on opening */
+@media (max-width: 760px) {
+  .d-menu.pm-menu { left: auto; right: 0; }
+  .d-wrap { grid-template-columns: 1fr; padding: 20px; gap: 16px; }
+  dialog[open] > .d-wrap { grid-template-rows: auto auto 1fr; padding-bottom: 0; }
+  dialog[open] .d-text { border-left: 0; margin-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 16px; }
+  .controls { margin-left: 0; }
+}
+@media (max-width: 520px) {
+  .titlebar { column-gap: 8px; }
+  .pm-btn { width: 40px; padding: 0; justify-content: center; }
+  .pm-btn span, .pm-btn .i-chev { display: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .card { transition: background-color 120ms ease, border-color 120ms ease; }
+}

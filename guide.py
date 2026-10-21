@@ -209,6 +209,7 @@ OBJECTIVES = [
     "flow matching",
     "hebbian",
     "competitive",
+    "reward",
 ]
 
 # What each objective optimizes, one line under the tag in the page's panel; a rule, where
@@ -216,6 +217,10 @@ OBJECTIVES = [
 # `objective_math` (its landmark paper's form). Markup: `x` a variable (italic), _{...} subscript,
 # ^{...} superscript.
 OBJECTIVE_MATH = {
+    "reward": (
+        "maximize E[Σ_{`t`} γ^{`t`} `r`_{`t`}]: the expected rewards `r`_{`t`} over time steps "
+        "`t`, discounted by γ < 1, each action `a` drawn from the policy π(`a` | `s`) in state `s`"
+    ),
     "supervised": (
         "minimize loss(`f`(`x`), `y`) over labeled pairs (`x`, `y`), `f` the network; e.g. "
         "−log `p`(`y` | `x`), the negative log probability of the correct label"
@@ -334,6 +339,8 @@ class Seg:
     opacity: float = 1.0
     arrow: bool = False
     near: tuple = ()  # cells of a group the line leaves from (exempt from clearance)
+    src: tuple = ()  # for the page's step-through: the cells the line carries data from,
+    dst: str = ""  # and the cell it carries it to, where its ends don't say (gates, feeds)
 
 
 @dataclass
@@ -345,7 +352,10 @@ class Diagram:
     dots: list = field(default_factory=list)
     stems: list = field(
         default_factory=list
-    )  # (start, end, opacity) stems drawn apart from a cell
+    )  # (start, end, opacity, kind) stems drawn apart from a cell
+    dot_dst: list = field(default_factory=list)  # the cell each gate's dot acts for
+    steps: dict = field(default_factory=dict)  # cell -> its step in the data flow (flow_steps)
+    seq: list = field(default_factory=list)  # a hand-written step-through: (from, to) cell sets
 
 
 def fmt(v: float) -> str:
@@ -488,7 +498,168 @@ def build_diagram(arch_id: str, spec: dict) -> Diagram:
     d = layout(arch_id, spec)
     lo, hi = x_span(d)
     shift = W / 2 - (lo + hi) / 2
-    return layout(arch_id, dict(spec, shift=shift)) if abs(shift) > 0.05 else d
+    if abs(shift) > 0.05:
+        d = layout(arch_id, dict(spec, shift=shift))
+    flow = spec.get("flow", True)  # optional: true (the default) follows the lines
+    if isinstance(flow, list):
+        d.seq = [
+            (cells_of(d, st.get("from", [])), cells_of(d, st["to"]), st.get("within", False))
+            for st in flow
+        ]
+    elif flow:
+        d.steps = flow_steps(d)
+    d.segs = [s for s in d.segs if s.style != "_flow"]  # flow-only edges, never drawn
+    return d
+
+
+def compares(d: Diagram, s: Seg) -> bool:
+    """A dashed comparison between two cells side by side (Siamese's and CLIP's two
+    embeddings): it runs both ways, so it carries no data from one to the other."""
+    return (
+        s.style == "cross"
+        and len(s.ends) == 2
+        and abs(d.cells[s.ends[0]].y - d.cells[s.ends[1]].y) < 0.5
+    )
+
+
+SEQ_ATTR = ' data-seq=""'  # marks a card's drawing whose step-through is hand-written
+
+
+def cells_of(d: Diagram, refs) -> set:
+    """The cells a step of a hand-written flow names: a group id, a [group, index] cell, or
+    a list of these."""
+    if isinstance(refs, str) or (
+        isinstance(refs, list) and len(refs) == 2 and isinstance(refs[1], int)
+    ):
+        refs = [refs]
+    out = set()
+    for r in refs:
+        k = ref(d, r)
+        out |= set(d.groups[k]) if k in d.groups else {k}
+    return out
+
+
+def seq_marks(d: Diagram, keys: tuple) -> str:
+    """For a hand-written flow, the steps at which a part shows: data-on where it is one of
+    the cells updated (or a line into one, or with `within`, a line between two of them),
+    data-mid where it is a cell read from, and data-rev where a line carries data against the
+    way it is drawn (from its second end to its first), so the page draws it in from there.
+    In a step with `within`, data-lag gives each part its place in the cascade up the cells
+    it updates ("step:slot"): a cell lights in its slot, a line draws in the slot before the
+    cell it reaches, so a column lights layer by layer rather than all at once."""
+    on, mid, rev, lag = [], [], [], []
+    for i, (src, dst, within) in enumerate(d.seq):
+        slots = seq_slots(d, dst) if within else {}
+        if len(keys) == 1:
+            if keys[0] in dst:
+                on.append(i)
+                if slots.get(keys[0]):
+                    lag.append(f"{i}:{slots[keys[0]]}")
+            elif keys[0] in src:
+                mid.append(i)
+        elif len(keys) == 2:
+            a, b = keys
+            joins = (a in src and b in dst) or (b in src and a in dst)
+            if joins or (within and a in dst and b in dst):
+                on.append(i)
+                if a in dst and b in src:
+                    rev.append(i)
+                k = max(slots.get(a, 0) if a in dst else 0, slots.get(b, 0) if b in dst else 0) - 1
+                if k > 0:
+                    lag.append(f"{i}:{k}")
+    out = f' data-on="{" ".join(map(str, on))}"'
+    out += f' data-mid="{" ".join(map(str, mid))}"' if mid else ""
+    out += f' data-lag="{" ".join(lag)}"' if lag else ""
+    return out + (f' data-rev="{" ".join(map(str, rev))}"' if rev else "")
+
+
+def seq_slots(d: Diagram, dst: set) -> dict:
+    """Each cell's place in the cascade up the cells one hand-written step updates: 0 for
+    one nothing in the step feeds, else one more than the latest cell in the step it reads."""
+    into = {k: [a for a, b in flow_edges(d) if b == k and a in dst] for k in dst}
+    slots = {}
+
+    def slot(k, seen=()):
+        if k not in slots:
+            slots[k] = (
+                0 if k in seen else max((slot(a, seen + (k,)) + 1 for a in into[k]), default=0)
+            )
+        return slots[k]
+
+    for k in dst:
+        slot(k)
+    return slots
+
+
+def flow_edges(d: Diagram) -> list:
+    """The diagram's data flow as (from cell, to cell) pairs: every line but the return
+    loops, which run the network again rather than carry data within one pass, and the
+    side-by-side comparisons, which go both ways."""
+    out = []
+    for s in d.segs:
+        if s.style == "loop" or compares(d, s):
+            continue
+        dst = s.dst or (s.ends[1] if len(s.ends) == 2 else "")
+        src = s.src or ((s.ends[0],) if len(s.ends) == 2 else ())
+        out += [(a, dst) for a in src if dst and a != dst]
+    return out
+
+
+def flow_steps(d: Diagram) -> dict:
+    """Each cell's step in one pass of data, for the page's step-through: the length of the
+    longest path of lines into it, so a cell lights up once everything it reads has. Empty
+    when the drawing has no direction to follow: a cycle, or units that are both visible and
+    updated (Hopfield and Boltzmann machines settle as a whole)."""
+    if any(c.kind == "backfed" for c in d.cells.values()):
+        return {}
+    edges = flow_edges(d)
+    into = {k: [] for k in d.cells}
+    for a, b in edges:
+        if a in into and b in into:
+            into[b].append(a)
+    steps, busy = {}, set()
+
+    def step(k):
+        if k in steps:
+            return steps[k]
+        if k in busy:
+            raise ValueError("cycle")
+        busy.add(k)
+        steps[k] = max((step(a) + 1 for a in into[k]), default=0)
+        busy.discard(k)
+        return steps[k]
+
+    try:
+        for k in d.cells:
+            step(k)
+    except ValueError:
+        return {}
+    # Some cells nothing feeds arrive just before they are first read, rather than at the
+    # start: a sequence's inputs, one per time step (those read by cells joined by state
+    # arrows), and a lone extra input such as the noise a sampler adds at its step. A row of
+    # inputs read all at once (a picture, a noise vector) stays at the start.
+    out_of = {k: [b for a, b in edges if a == k and b in steps] for k in d.cells}
+    chained = {k for s in d.segs if s.style == "state" and len(s.ends) == 2 for k in s.ends}
+    group_of = {k: g for g, ks in d.groups.items() for k in ks}
+    for k in d.cells:
+        if into[k] or not out_of[k]:
+            continue
+        if all(b in chained for b in out_of[k]) or len(d.groups[group_of[k]]) == 1:
+            steps[k] = max(0, min(steps[b] for b in out_of[k]) - 1)
+    return steps if max(steps.values(), default=0) > 0 else {}
+
+
+def flow_count(d: Diagram) -> int:
+    """How many steps the page's step-through shows: one per step of the pass, and one more
+    for a return loop or a side-by-side comparison, which light once the pass is done."""
+    if d.seq:
+        return len(d.seq)
+    if not d.steps:
+        return 0
+    last = max(d.steps.values())
+    after = [last + 1 for s in d.segs if s.style == "loop"]  # the return line, after the pass
+    after += [max(d.steps[k] for k in s.ends) + 1 for s in d.segs if compares(d, s)]
+    return max([last] + after) + 1
 
 
 def x_span(d: Diagram) -> tuple:
@@ -684,8 +855,11 @@ def gates(d: Diagram, src: list, dst: list, mode=True):
         s = extent(S, ux, uy) + GAP
         p0 = (S.x + ux * s, S.y + uy * s)
         p1 = (mx - ux * (DOT + GAP), my - uy * (DOT + GAP))
-        d.segs.append(Seg("gate", [p0, p1], ends=(S.key,), opacity=S.opacity))
+        d.segs.append(
+            Seg("gate", [p0, p1], ends=(S.key,), opacity=S.opacity, src=(S.key,), dst=B.key)
+        )
         d.dots.append((mx, my, 1.0))
+        d.dot_dst.append(B.key)
         if mode == "recurrent":
             sx = 1 if B.x > A.x else -1
             s = extent(A, sx * DIAG, -DIAG) + GAP
@@ -693,7 +867,17 @@ def gates(d: Diagram, src: list, dst: list, mode=True):
             q2 = (mx, my - DOT - GAP)
             q1 = (mx, q0[1] - abs(mx - q0[0]))
             path, samples = rounded_path([q0, q1, q2], BEND)
-            d.segs.append(Seg("gate", samples, d=path, ends=(A.key,), opacity=A.opacity))
+            d.segs.append(
+                Seg(
+                    "gate",
+                    samples,
+                    d=path,
+                    ends=(A.key,),
+                    opacity=A.opacity,
+                    src=(A.key,),
+                    dst=B.key,
+                )
+            )
 
 
 def ref(d: Diagram, r) -> str:
@@ -828,8 +1012,12 @@ def whole_loop(d: Diagram, lp: dict):
     d.segs.append(Seg("loop", samples, d=path, near=tuple(ga) + tuple(gb)))
     for c in outs:
         bot = c.y - extent(c, 0.0, -1.0) - GAP
-        d.segs.append(Seg("loop", [(c.x, bot), (c.x, y_top)], ends=(c.key,), opacity=c.opacity))
-        d.stems.append(((c.x, y_top - MARK_GAP), (c.x, y_top - MARK_GAP - STEM), c.opacity))
+        d.segs.append(  # leaves with its output, which the step-through lights it with (dst)
+            Seg("loop", [(c.x, bot), (c.x, y_top)], ends=(c.key,), opacity=c.opacity, dst=c.key)
+        )
+        d.stems.append(
+            ((c.x, y_top - MARK_GAP), (c.x, y_top - MARK_GAP - STEM), c.opacity, c.kind)
+        )
     for c in ins:
         top = c.y + extent(c, 0.0, 1.0) + GAP
         d.segs.append(Seg("loop", [(c.x, y_bot), (c.x, top)], ends=(c.key,), arrow=True))
@@ -878,6 +1066,8 @@ def arrow(d: Diagram, ar: dict):
             ends=ends_a + ends_b,
             near=near_a + near_b,
             arrow=ar.get("head", True),
+            src=ends_a or near_a,
+            dst=(ends_b or near_b)[0],
         )
     )
 
@@ -898,6 +1088,8 @@ def drop(d: Diagram, dp: dict):
             ends=(T.key,),
             near=(A.key, B.key),
             arrow=True,
+            src=(A.key,),
+            dst=T.key,
         )
     )
 
@@ -920,13 +1112,25 @@ def feed(d: Diagram, fd: dict):
             [(x0, y), (x1, y)],
             near=tuple(d.groups[fd["from"]]),  # the row it runs beneath keeps its stems
             arrow=fd.get("head", True) and not branches,
+            src=tuple(d.groups[fd["from"]]),
+            dst=row[0].key,
         )
     )
+    if not branches:  # one line for the whole row: it hands data to every cell
+        for c in row[1:]:
+            d.segs.append(Seg("_flow", [], src=tuple(d.groups[fd["from"]]), dst=c.key))
     if branches:
         for c in row:
             top = c.y + extent(c, 0.0, 1.0) + GAP
             d.segs.append(
-                Seg(fd.get("style", "state"), [(c.x, y), (c.x, top)], ends=(c.key,), arrow=True)
+                Seg(
+                    fd.get("style", "state"),
+                    [(c.x, y), (c.x, top)],
+                    ends=(c.key,),
+                    arrow=True,
+                    src=tuple(d.groups[fd["from"]]),
+                    dst=c.key,
+                )
             )
 
 
@@ -1064,7 +1268,7 @@ MONTHS = [
 
 
 def updated_date(doc: dict):
-    """The day the chart last changed. The build sets it (see chart_date); an `updated` in
+    """The day the poster last changed. The build sets it (see chart_dates); an `updated` in
     architectures.yaml overrides that, and without either it is today."""
     u = doc.get("updated")
     if u is None:
@@ -1079,6 +1283,12 @@ def updated_date(doc: dict):
 
 def date_text(u) -> str:
     return f"{u.day} {MONTHS[u.month - 1]} {u.year}"
+
+
+def page_updated_date(doc: dict):
+    """The day the page last changed, which its footer prints: the build sets it apart from
+    the poster's (see chart_dates), so a change to the page alone leaves the poster's date."""
+    return doc.get("page_updated") or updated_date(doc)
 
 
 def updated_text(doc: dict) -> str:
@@ -1101,6 +1311,119 @@ def notice_text(doc: dict) -> str:
     """The copyright line with the license after it."""
     lic = license_of(doc)
     return notice(doc) + (f" · {lic['text']}" if lic else "")
+
+
+def live_weights(d: Diagram, seed: int) -> dict:
+    """Weights for the primer's live network, one per line, drawn from a fixed seed (chosen so
+    the two outputs answer the inputs differently) and rounded to a tenth."""
+    import random
+
+    r = random.Random(seed)
+    out = {}
+    for s in d.segs:
+        if len(s.ends) == 2:
+            out[tuple(s.ends)] = round(r.gauss(0, 2.2), 1)
+    return out
+
+
+def primer_live(d: Diagram) -> str:
+    """The controls under the primer's live network: a slider per input, the outputs' values,
+    and a button for new weights."""
+    ins = sorted((c for c in d.cells.values() if c.kind == "input"), key=lambda c: c.x)
+    sliders = "".join(
+        f'<label><span>Input {i + 1}</span><input type="range" min="0" max="1" step="0.01" '
+        f'value="0.5" data-c="{c.key}"><output>0.50</output></label>'
+        for i, c in enumerate(ins)
+    )
+    return (
+        f'<div class="p-live-ctl">{sliders}<p class="p-outs"><span>Outputs</span> '
+        '<output class="p-out"></output>'
+        '<button type="button" class="p-new">New weights</button></p>'
+        '<p class="p-read" aria-live="polite">Point at a unit or a line to see its numbers.</p></div>'
+    )
+
+
+def primer_figure(d: Diagram, labels: list, live: int = 0) -> str:
+    """A panel's drawing for the primer, with its rows named at the left, bottom to top. With
+    `live` (a seed), the drawing runs: each line carries a weight and each unit lights by its
+    activity, as the inputs are set below it."""
+    rows = sorted({round(c.y, 1) for c in d.cells.values()}, reverse=True)
+    lx = min(c.x - extent(c, -1.0, 0.0) for c in d.cells.values()) - 10.0  # just left of the cells
+    names = "".join(
+        f'<text x="{fmt(lx)}" y="{fmt(y + 3.5)}" text-anchor="end">{html.escape(t)}</text>'
+        for y, t in zip(rows, labels)
+    )
+    x0 = lx - 62.0  # room for the longest name
+    return (
+        f'<figure class="p-fig{" p-live" if live else ""}"><svg viewBox="{fmt(x0)} 0 '
+        f'{fmt(W - x0)} {fmt(H)}" role="img" aria-label="{html.escape(", ".join(labels))}">'
+        f'<defs>{marker_def("arr-primer", "currentColor")}</defs><g class="p-names">{names}</g>'
+        f'{render_diagram(d, "arr-primer", weights=live_weights(d, live) if live else None)}</svg>'
+        + (primer_live(d) if live else "")
+        + "</figure>"
+    )
+
+
+def primer_key(items: list, groups: dict = None) -> str:
+    """A primer key: each cell or link listed, with the legend's symbol and a line on what it
+    means. With `groups` (legend column -> a line on what it shares), the items fall under the
+    legend's columns, each headed by its name and that line."""
+    if not items:
+        return ""
+
+    def li(it):
+        kind, name = ("cell", it["cell"]) if "cell" in it else ("link", it["link"])
+        label = (CELLS if kind == "cell" else LINKS)[name]["label"]
+        return (
+            f"<li>{symbol_svg(kind, name)}<span><b>{html.escape(label)}.</b> "
+            f"{prose_html(it['text'])}</span></li>"
+        )
+
+    if not groups:
+        return f'<ul class="p-key">{"".join(li(it) for it in items)}</ul>'
+    out = []
+    for gid in list(GROUPS) + ["links"]:
+        mine = [
+            it
+            for it in items
+            if ("link" in it and gid == "links")
+            or CELLS.get(it.get("cell"), {}).get("group") == gid
+        ]
+        if not mine:
+            continue
+        title = LINK_GROUP if gid == "links" else GROUPS[gid]["label"]
+        out.append(
+            f'<div class="p-group"><h4>{html.escape(title)}</h4>'
+            + (f"<p>{prose_html(groups[gid])}</p>" if groups.get(gid) else "")
+            + f'<ul class="p-key">{"".join(li(it) for it in mine)}</ul></div>'
+        )
+    return f'<div class="p-keys">{"".join(out)}</div>'
+
+
+def primer_html(doc: dict, diagrams: dict) -> str:
+    """The primer for readers new to neural networks: a dialog the page's "?" button opens."""
+    sections = "".join(
+        (
+            f'<h3 id="primer-{html.escape(sec["anchor"])}" tabindex="-1">'
+            if sec.get("anchor")
+            else "<h3>"
+        )
+        + f'{html.escape(sec["title"])}</h3>'
+        + (
+            primer_figure(diagrams[sec["figure"]], sec.get("labels", []), sec.get("live", 0))
+            if sec.get("figure")
+            else ""
+        )
+        + "".join(f"<p>{prose_html(t)}</p>" for t in sec["text"].strip().split("\n") if t.strip())
+        + primer_key(sec.get("key", []), sec.get("groups"))
+        for sec in doc.get("primer", [])
+    )
+    return (
+        '<dialog id="primer" aria-labelledby="p-title"><div class="p-wrap">'
+        '<h2 id="p-title" tabindex="-1">What is a neural network?</h2>'
+        f'{sections}</div><div class="p-nav"><button class="btn" type="button" id="p-close">Close'
+        "</button></div></dialog>"
+    )
 
 
 def panel_credit(doc: dict) -> str:
@@ -1175,6 +1498,32 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
     for aid in arch:
         if placed.count(aid) != 1:
             warns.append(f"{aid}: appears {placed.count(aid)} times in sections (expected once)")
+    for sec in doc.get("primer", []):
+        if sec.get("figure") and sec["figure"] not in arch:
+            warns.append(f"primer: figure '{sec['figure']}' is not an architecture")
+        for it in sec.get("key", []):
+            if it.get("cell", "") not in CELLS and it.get("link", "") not in LINKS:
+                warns.append(f"primer: key item {it} names no cell or link type")
+        if sec.get("groups"):  # a full key: every symbol the legend shows, once
+            cells, links = used_kinds(diagrams)
+            want = [("cell", k) for k in cells] + [("link", k) for k in links]
+            have = [
+                ("cell", it["cell"]) if "cell" in it else ("link", it.get("link"))
+                for it in sec.get("key", [])
+            ]
+            for w in want:
+                if have.count(w) != 1:
+                    warns.append(
+                        f"primer: the full key lists {w[0]} '{w[1]}' {have.count(w)} times (expected once)"
+                    )
+            for h in have:
+                if h not in want:
+                    warns.append(
+                        f"primer: the full key lists {h[0]} '{h[1]}', which no diagram uses"
+                    )
+            for g in sec["groups"]:
+                if g not in GROUPS and g != "links":
+                    warns.append(f"primer: unknown key group '{g}'")
     for o in OBJECTIVES:
         if o not in OBJECTIVE_MATH:
             warns.append(f"objective '{o}' has no formula in OBJECTIVE_MATH")
@@ -1208,6 +1557,13 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
                     warns.append(f"{aid}: related {rel} names unknown architecture '{t}'")
                 elif t == aid:
                     warns.append(f"{aid}: related {rel} names itself")
+        aka = a.get("aka", [])
+        if not isinstance(aka, list) or not all(isinstance(n, str) and n.strip() for n in aka):
+            warns.append(f"{aid}: aka must be a list of names")
+        else:
+            for n in aka:
+                if n.lower() in (a["name"].lower(), str(a.get("full", "")).lower()):
+                    warns.append(f"{aid}: aka repeats its own name '{n}'")
         for o in a.get("also_objectives", []):
             if o not in OBJECTIVES:
                 warns.append(
@@ -1433,7 +1789,40 @@ def cell_svg(
 STYLE_ORDER = ["frozen", "link", "skip", "func", "cross", "gate", "state", "loop"]
 
 
-def render_diagram(d: Diagram, marker_id: str, ink: str = "currentColor") -> str:
+def render_diagram(
+    d: Diagram,
+    marker_id: str,
+    ink: str = "currentColor",
+    tags: bool = False,
+    weights: dict = None,
+) -> str:
+    """A diagram's lines, dots and cells. With `tags`, each part names its key entry
+    (data-k="cell:hidden", "link:state"), so the page can light up the parts a key entry
+    stands for, and its step in the data flow (data-s, see flow_steps), so the page can
+    step through a pass. With `weights` ({(from, to): w}), each cell names itself (data-c) and
+    each line its ends and weight (data-e, data-w), for the primer's live network."""
+
+    def tag(k):
+        return f' data-k="{k}"' if tags else ""
+
+    last = max(d.steps.values(), default=0)
+
+    def at(n, keys=()):  # a part's step, for the step-through
+        if tags and d.seq:
+            return seq_marks(d, keys)
+        return f' data-s="{n}"' if tags and d.steps else ""
+
+    def both(s):  # a comparison draws in from both ends at once, meeting in the middle
+        return ' data-both=""' if tags and compares(d, s) else ""
+
+    def seg_step(s):
+        if s.style == "loop" and not s.dst:  # the return line, after the pass
+            return last + 1
+        if compares(d, s):  # the step after both sides are ready
+            return max(d.steps.get(k, 0) for k in s.ends) + 1
+        dst = s.dst or (s.ends[1] if len(s.ends) == 2 else s.ends[0] if s.ends else "")
+        return d.steps.get(dst, 0)
+
     out = []
     for style in STYLE_ORDER:
         segs = [s for s in d.segs if s.style == style]
@@ -1453,6 +1842,9 @@ def render_diagram(d: Diagram, marker_id: str, ink: str = "currentColor") -> str
                 else f' opacity="{fmt(s.opacity) if s.opacity >= 0.1 else s.opacity}"'
             )
             mk = f' marker-end="url(#{marker_id})"' if s.arrow else ""
+            op += at(seg_step(s), s.ends) + both(s)
+            if weights is not None and tuple(s.ends) in weights:
+                op += f' data-e="{s.ends[0]} {s.ends[1]}" data-w="{weights[tuple(s.ends)]}"'
             if style == "func":
                 items.append(f'<path d="{squiggle(s.pts[0], s.pts[-1])}"{op}/>')
             elif s.d:
@@ -1462,20 +1854,33 @@ def render_diagram(d: Diagram, marker_id: str, ink: str = "currentColor") -> str
                 items.append(
                     f'<line x1="{fmt(x0)}" y1="{fmt(y0)}" x2="{fmt(x1)}" y2="{fmt(y1)}"{op}{mk}/>'
                 )
-        out.append(f'<g {attrs}>{"".join(items)}</g>')
+        out.append(f'<g{tag("link:" + st.get("legend_as", style))} {attrs}>{"".join(items)}</g>')
     if d.dots:
         dots = "".join(
-            f'<circle cx="{fmt(x)}" cy="{fmt(y)}" r="{fmt(DOT)}"/>' for x, y, _ in d.dots
+            f'<circle cx="{fmt(x)}" cy="{fmt(y)}" r="{fmt(DOT)}"{at(d.steps.get(k, 0))}/>'
+            for (x, y, _), k in zip(d.dots, d.dot_dst)
         )
-        out.append(f'<g fill="{ink}">{dots}</g>')
+        out.append(f'<g{tag("link:gate")} fill="{ink}">{dots}</g>')
     for kind in CELLS:
         for c in d.cells.values():
             if c.kind == kind:
-                out.append(cell_svg(kind, c.x, c.y, c.opacity, ink, c.mark_dir, c.marks))
-    for p, q, op in d.stems:  # stems set apart from their cells, past a whole-row return line
+                body = cell_svg(kind, c.x, c.y, c.opacity, ink, c.mark_dir, c.marks)
+                if weights is not None:
+                    body = f'<g data-c="{c.key}">{body}</g>'
+                out.append(
+                    f'<g{tag("cell:" + kind)}{at(d.steps.get(c.key, 0), (c.key,))}>{body}</g>'
+                    if tags
+                    else body
+                )
+    for (
+        p,
+        q,
+        op,
+        kind,
+    ) in d.stems:  # stems set apart from their cells, past a whole-row return line
         fade = "" if op == 1 else f' opacity="{fmt(op)}"'
         out.append(
-            f'<line x1="{fmt(p[0])}" y1="{fmt(p[1])}" x2="{fmt(q[0])}" y2="{fmt(q[1])}" '
+            f'<line{tag("cell:" + kind)}{at(last)} x1="{fmt(p[0])}" y1="{fmt(p[1])}" x2="{fmt(q[0])}" y2="{fmt(q[1])}" '
             f'stroke="{ink}" stroke-width="1.1" stroke-linecap="round"{fade}/>'
         )
     return "".join(out)
@@ -1990,688 +2395,25 @@ ORDER_OPTIONS = "".join(
 
 # Published next to the web page; its Save buttons hand these files to the viewer.
 POSTER = "neural-network-field-guide"  # the posters' file name in dist/, before .svg, .pdf, .png
-POSTER_FILES = [
-    (f"{POSTER}.pdf", "PDF"),
-    (f"{POSTER}.png", "PNG"),
-    (f"{POSTER}-dark.png", "PNG, dark"),
+POSTER_FILES = [  # file, its format, and a word on which to choose (the page's Poster menu)
+    (f"{POSTER}.pdf", "PDF", "for print"),
+    (f"{POSTER}.png", "PNG", "light"),
+    (f"{POSTER}-dark.png", "PNG", "dark"),
 ]
 
-PAGE_CSS = r"""
-/* Layout: a specimen catalogue. Masthead with poster downloads and a legend grouped by
-   color, a sticky filter bar, then one labelled grid per family. Diagrams carry the page. */
-:root {
-  --bg: #FFFFFF; --surface: #F4F4F1; --ink: #1C1B19; --muted: #66655F;
-  --rule: #E3E2DD; --focus: #0077CC; --chip-on-bg: #1C1B19; --chip-on-ink: #FFFFFF;
-  --scrim: rgba(28, 27, 25, 0.5);
-  --display: 'Poppins', 'Avenir Next', 'Segoe UI', Helvetica, Arial, sans-serif;
-  --body: 'Lato', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  --mono: 'Noto Sans Mono', ui-monospace, Menlo, Consolas, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #141413; --surface: #1F1F1D; --ink: #ECEBE6; --muted: #A3A19A;
-    --rule: #302F2C; --focus: #4DB8FF; --chip-on-bg: #ECEBE6; --chip-on-ink: #141413;
-    --scrim: rgba(0, 0, 0, 0.62); color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #141413; --surface: #1F1F1D; --ink: #ECEBE6; --muted: #A3A19A;
-  --rule: #302F2C; --focus: #4DB8FF; --chip-on-bg: #ECEBE6; --chip-on-ink: #141413;
-  --scrim: rgba(0, 0, 0, 0.62); color-scheme: dark;
-}
-:root[data-theme="light"] { color-scheme: light; }
-[hidden] { display: none !important; }
-.icon-btn { display: inline-grid; place-items: center; box-sizing: border-box; width: 40px; height: 40px;
-  padding: 0; text-decoration: none; border-radius: 10px; border: 1px solid var(--rule);
-  background: var(--bg); color: var(--ink); cursor: pointer; }
-.icon-btn:hover { border-color: var(--muted); }
-.icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8;
-  stroke-linecap: round; stroke-linejoin: round; }
-/* The icon shows the theme a click switches to: a moon on light, a sun on dark. */
-.icon-btn .i-sun { display: none; }
-:root[data-theme="dark"] .icon-btn .i-sun { display: block; }
-:root[data-theme="dark"] .icon-btn .i-moon { display: none; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .icon-btn .i-sun { display: block; }
-  :root:not([data-theme="light"]) .icon-btn .i-moon { display: none; }
-}
-body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55; margin: 0; }
-.page { max-width: 1240px; margin: 0 auto; box-sizing: border-box;
-  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 40px 56px; }
-.masthead { --title-size: clamp(30px, 5.2vw, 48px); display: grid; gap: 12px; margin-bottom: 22px; }
-.masthead h1 { font-family: var(--display); font-weight: 500; font-size: var(--title-size);
-  line-height: 1.06; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
-/* The title and the theme button share a row; the button sits centered on the title's first line. */
-/* The title row: the title, then the poster's save buttons and the theme button, both
-   centered on the title's first line. On a phone the save buttons drop below the title. */
-.titlebar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; }
-.titlebar h1 { flex: 1; min-width: 0; }
-.titlebar .icon-btn, .titlebar .save { margin-top: calc((var(--title-size) * 1.06 - 40px) / 2); }
-/* As on the poster: the subtitle on one line where the page is wide enough, and the reading
-   text across the full width, balanced like the poster's (guide.POSTER_TEXT of the column). */
-.lede { margin: 0; font-size: 20px; line-height: 1.4; text-wrap: balance; }
-.reading { max-width: 94%; margin: 12px 0 0; color: var(--muted); text-wrap: balance; }
-.eyebrow { font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: 0.13em;
-  text-transform: uppercase; color: var(--muted); }
-.save { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.save .eyebrow { margin-right: 4px; }
-.save-status { font-size: 13px; color: var(--muted); }
-.legend { margin-top: 8px; border-top: 1px solid var(--rule); padding-top: 12px; }
-.legend summary { cursor: pointer; width: max-content; }
-.legend-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px 14px; margin-top: 8px; }
-/* wide enough for all seven groups in one row: each column as wide as its labels, spread out */
-@media (min-width: 1200px) { .legend-grid { grid-template-columns: repeat(7, auto); justify-content: space-between; } }
-.lg-group { min-width: 0; }
-.lg-title { font-family: var(--display); font-weight: 500; font-size: 14px; margin: 0 0 4px; }
-.lg-group ul, .d-key ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; align-content: start; }
-.d-key ul { gap: 8px; }  /* stacked cells' stems would otherwise nearly touch */
-.lg-group li, .d-key li { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.3; }
-.lg-group svg, .d-key svg { width: 26px; height: 26px; flex: none; overflow: visible; }
-/* the page's legend sits tighter than an explanation's key */
-.lg-group ul { gap: 0; }
-.lg-group li { line-height: 1.2; gap: 6px; white-space: nowrap; }   /* every label fits in Lato; a fallback font may run into the gap */
-.lg-group svg { width: 20px; height: 20px; }   /* leaves the longest label, Cross-attention, comparison, one line */
-.d-key { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 14px; }
-.filters { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg);
-  border-bottom: 1px solid var(--rule); padding-block: 12px; display: flex; flex-wrap: wrap;
-  gap: 10px 14px; align-items: center; }
-.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.controls select, .controls input { font: 14px var(--body); color: var(--ink); background: var(--bg);
-  border: 1px solid var(--rule); border-radius: 8px; padding: 7px 10px; min-width: 0; }
-.controls input { width: 12rem; max-width: 100%; }
-.count { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
-/* The pack toggle sits with the selects, before the search, so the count never moves it.
-   Pressed, sections take a row each instead of sharing rows as on the poster. */
-.controls .pack { width: 32px; height: 32px; border-radius: 8px; color: var(--ink); }
-.controls .pack[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); background: var(--rule); }
-.controls .pack svg { width: 16px; height: 16px; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.family { margin-top: 30px; }
-/* Sections share one column grid: a section shorter than a row spans just its cards (set by the
-   script), so short sections sit side by side as on the poster; longer ones take whole rows. */
-#groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); column-gap: 14px; }
-#groups > .family { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: subgrid;
-  align-content: start; }
-#groups > .family > * { grid-column: 1 / -1; min-width: 0; }
-.family h2 { font-family: var(--display); font-weight: 500; font-size: 12px; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--muted); margin: 0; padding-bottom: 8px;
-  border-bottom: 1px solid var(--rule); }
-.family h2.plain { text-transform: none; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 6px 14px; margin-top: 10px; }
-#groups .grid { grid-template-columns: subgrid; }
-.card { appearance: none; font: inherit; text-align: left; color: var(--ink); background: transparent;
-  border: 1px solid transparent; border-radius: 10px; padding: 10px 10px 12px; cursor: pointer;
-  display: grid; gap: 3px; align-content: start; min-width: 0; }
-.card:hover { background: var(--surface); border-color: var(--rule); }
-.card svg { width: 100%; height: auto; display: block; }
-.card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 6px; }
-.card .name { font-family: var(--display); font-size: 15px; font-weight: 500; line-height: 1.25; }
-.card .year { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.card .cap { font-size: 13px; color: var(--muted); line-height: 1.35; }
-.card .tag { justify-self: start; font-family: var(--mono); font-size: 11px; color: var(--muted);
-  border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; margin-top: 5px; }
-.empty { margin-top: 40px; color: var(--muted); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.btn { font: 500 13px/1 var(--display); padding: 9px 14px; border-radius: 8px; border: 1px solid var(--rule);
-  background: var(--bg); color: var(--ink); cursor: pointer; }
-.btn:hover { border-color: var(--muted); }
-.btn:disabled { opacity: 0.55; cursor: progress; }
-a.btn { display: inline-block; text-decoration: none; }
-footer { margin-top: 56px; border-top: 1px solid var(--rule); padding-top: 16px; color: var(--muted);
-  font-size: 13px; display: grid; gap: 4px; }
-footer a { color: inherit; text-underline-offset: 2px; }
-dialog { border: 1px solid var(--rule); border-radius: 14px; padding: 0; width: min(1040px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px); max-height: calc(100dvh - 32px); overflow: auto; background: var(--bg);
-  color: var(--ink); clip-path: inset(0 round 14px); }
-/* clip-path rounds the scrollbar with the corners: a scrollbar that always shows (macOS's
-   setting, Windows) is otherwise drawn square across them */
-/* One height for every panel, so Previous and Next stay put: as tall as the window allows, up to
-   840px; a long panel scrolls inside, and the buttons sit at the bottom however short it is. The
-   gutter keeps room for a scrollbar that shows, so they do not shift sideways either. */
-dialog[open] { display: flex; flex-direction: column; scrollbar-gutter: stable; height: min(840px, calc(100vh - 48px));
-  height: min(840px, calc(100dvh - 32px)); }
-dialog[open] > .d-wrap { flex: 1 0 auto; grid-template-rows: 1fr auto; padding-bottom: 0; }
-/* A hairline between the drawing and its text, centered in the 28px gap and as tall as the text
-   column; across the top of the text instead when the popup is one column */
-dialog[open] .d-text { align-self: stretch; border-left: 1px solid var(--rule); margin-left: -14px; padding-left: 13px; }
-dialog[open] .d-nav { align-self: end; }
-dialog::backdrop { background: var(--scrim); }
-.d-wrap { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 28px; padding: 28px; }
-.d-side { min-width: 0; align-self: start; display: grid; gap: 14px; }
-.d-label { font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: 0.13em;
-  text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
-.d-fig { min-width: 0; }
-.d-fig svg { width: 100%; height: auto; display: block; }
-/* Diagram actions, as in Vega-Lite: a quiet "⋯" at the top right of the side column, opening
-   a small menu to save the drawing or copy a link to it */
-.d-side { position: relative; }
-.d-more { position: absolute; top: -6px; right: 0; width: 30px; height: 30px; display: grid; place-items: center;
-  padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted);
-  cursor: pointer; }
-.d-more svg { width: 18px; height: 18px; fill: currentColor; }
-.d-more:hover, .d-more[aria-expanded="true"] { color: var(--ink); border-color: var(--rule); background: var(--bg); }
-.d-menu { position: absolute; top: 28px; right: 0; z-index: 2; display: grid; min-width: 150px; padding: 4px;
-  background: var(--bg); border: 1px solid var(--rule); border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14); }
-.d-menu button { appearance: none; border: 0; background: none; font: 14px var(--body); color: var(--ink);
-  text-align: left; padding: 8px 12px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
-.d-menu button:hover, .d-menu button:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent);
-  outline: none; }
-.d-text { min-width: 0; }
-.d-kicker { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0; }
-.d-kicker .nw { white-space: nowrap; }
-.d-text h2 { font-family: var(--display); font-weight: 500; font-size: 28px; line-height: 1.15; margin: 12px 0 6px; }
-.d-full { font-family: var(--display); font-size: 15px; }
-/* .d-text p would zero these margins, so they are set with .d-text's weight */
-.d-text .d-full { margin: 0 0 4px; }
-.d-text .d-cap { color: var(--muted); margin: 0 0 20px; }
-.d-text .d-note { font-size: 13px; color: var(--muted); margin: -12px 0 20px; max-width: 62ch; }
-#d-name:focus { outline: none; }
-.d-text h3 { font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: 0.13em;
-  text-transform: uppercase; color: var(--muted); margin: 20px 0 4px; }
-.d-text p { margin: 0; max-width: 62ch; }
-/* Papers as a reference list: authors (year). Title, linked. Where it appeared. No bullets;
-   a hanging indent, and a quiet underline that darkens on hover. */
-.d-papers { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-width: 62ch; }
-.d-papers li { padding-left: 1.5em; text-indent: -1.5em; }
-.d-papers a { color: inherit; text-decoration-line: underline; text-decoration-thickness: 1px;
-  text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 30%, transparent); }
-.d-papers a:hover { text-decoration-color: currentColor; }
-.d-papers .src { color: var(--muted); }
-/* The objective's formula, under its tag */
-.d-text .d-math { margin-top: 4px; font-size: 14px; line-height: 1.6; }
-.d-text sub, .d-text sup { font-size: 0.72em; line-height: 0; }  /* keep lines evenly spaced */
-.d-math .k { color: var(--muted); }
-.d-text i { padding-right: 0.07em; }  /* an italic letter leans into a parenthesis after it */
-/* Related: a muted label, then the panels as links that open them in place */
-.d-rel { display: grid; gap: 4px; }
-.d-rel .k { color: var(--muted); }
-.d-rel button { appearance: none; border: 0; padding: 0; background: none; font: inherit; color: inherit;
-  cursor: pointer; text-decoration-line: underline; text-decoration-thickness: 1px;
-  text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 30%, transparent); }
-.d-rel button:hover { text-decoration-color: currentColor; }
-/* The buttons stay at the bottom of the dialog while its content scrolls, on phones especially */
-.d-nav { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; border-top: 1px solid var(--rule);
-  position: sticky; bottom: 0; background: var(--bg); padding: 14px 0 calc(14px + env(safe-area-inset-bottom, 0px)); }
-/* When more of the panel lies below, a short fade above the buttons: the cut-off line fades out
-   instead of being sliced, and the fade says there is more; it goes once the end is reached */
-.d-nav::before { content: ""; position: absolute; left: 0; right: 0; bottom: calc(100% + 1px); height: 28px;
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 0%, transparent), var(--bg));
-  pointer-events: none; opacity: 0; transition: opacity 0.15s; }
-dialog.more .d-nav::before { opacity: 1; }
-dialog.instant .d-nav::before { transition: none; }  /* set at once when a panel opens */
-@media (max-width: 760px) {
-  .titlebar .save { order: 3; flex-basis: 100%; margin-top: 0; }
-  .d-wrap { grid-template-columns: 1fr; padding: 20px; gap: 16px; }
-  dialog[open] > .d-wrap { grid-template-rows: auto auto 1fr; padding-bottom: 0; }
-  dialog[open] .d-text { border-left: 0; margin-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 16px; }
-  .controls { margin-left: 0; }
-}
-@media (prefers-reduced-motion: no-preference) {
-  .card { transition: background-color 120ms ease, border-color 120ms ease; }
-}
-"""
+# The page's stylesheet and script live beside this file, in assets/, so editors treat them as
+# CSS and JavaScript; the build inlines them into the page as they are.
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
-PAGE_JS = r"""
-(() => {
-  const DATA = JSON.parse(document.getElementById('guide-data').textContent);
-  // Download a diagram: the drawing in its card, as a standalone SVG like dist/panels/<id>.svg,
-  // in the poster's ink and with the guide's credit. A plain page saves through a link; on
-  // claude.ai the poster's downloads capability sets saveFile once it is granted.
-  const dlBtn = document.getElementById('d-more');  // carries the credit and ink for the file
-  let saveFile = null;
-  if ((document.getElementById('save') || {}).dataset?.mode === 'standalone') {
-    saveFile = async (name, blob) => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      document.body.append(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    };
-  }
-  function panelFile(id) {
-    const svg = document.querySelector('.card[data-id="' + id + '"] svg').outerHTML;
-    const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    const head = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="$1" width="$2" height="$3" role="img">' +
-      '<title>' + esc(DATA[id].name) + '</title><desc>' + esc(dlBtn.dataset.credit) + '</desc>';
-    const body = svg
-      .replace(/^<svg viewBox="(0 0 ([\d.]+) ([\d.]+))"[^>]*>/, (m, vb, w, h) =>
-        head.replace('$1', vb).replace('$2', 2 * w).replace('$3', 2 * h))
-      .split('currentColor').join(dlBtn.dataset.ink);
-    return new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + body], { type: 'image/svg+xml' });
-  }
-  // The drawing as a PNG: the SVG drawn on a white canvas at four times the panel's size
-  function panelPng(id) {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(panelFile(id));
-      const img = new Image();
-      img.onload = () => {
-        const c = document.createElement('canvas');
-        c.width = img.naturalWidth * 2;  // the file is drawn at 2x, so 4x of the panel
-        c.height = img.naturalHeight * 2;
-        const g = c.getContext('2d');
-        g.fillStyle = '#FFFFFF';
-        g.fillRect(0, 0, c.width, c.height);
-        g.drawImage(img, 0, 0, c.width, c.height);
-        URL.revokeObjectURL(url);
-        c.toBlob(b => (b ? resolve(b) : reject(new Error('png'))), 'image/png');
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('svg')); };
-      img.src = url;
-    });
-  }
-  const menu = document.getElementById('d-menu');
-  const standalone = (document.getElementById('save') || {}).dataset?.mode === 'standalone';
-  function setMenu(open) {
-    menu.hidden = !open;
-    dlBtn.setAttribute('aria-expanded', String(open));
-    if (open) (menu.querySelector('button:not([hidden])') || dlBtn).focus();
-  }
-  // which actions this page can offer: saving needs saveFile, a link needs a real address
-  function refreshMenu() {
-    menu.querySelectorAll('[data-act="svg"], [data-act="png"]').forEach(b => { b.hidden = !saveFile; });
-    menu.querySelector('[data-act="link"]').hidden = !standalone;
-    dlBtn.hidden = !menu.querySelector('button:not([hidden])');
-  }
-  dlBtn.addEventListener('click', () => setMenu(menu.hidden));
-  menu.addEventListener('click', async e => {
-    const b = e.target.closest('button[data-act]');
-    if (!b || !current) return;
-    const id = current, base = 'neural-network-field-guide-' + id;
-    try {
-      if (b.dataset.act === 'svg') await saveFile(base + '.svg', panelFile(id));
-      if (b.dataset.act === 'png') await saveFile(base + '.png', await panelPng(id));
-      if (b.dataset.act === 'link') {
-        await navigator.clipboard.writeText(location.origin + location.pathname + '#' + id);
-        const label = b.textContent;
-        b.textContent = 'Link copied';
-        setTimeout(() => { b.textContent = label; }, 1500);
-        return;  // the menu stays open so the confirmation shows
-      }
-    } catch (err) {}
-    setMenu(false);
-  });
-  menu.addEventListener('keydown', e => {
-    const items = Array.from(menu.querySelectorAll('button:not([hidden])'));
-    const i = items.indexOf(document.activeElement);
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      e.stopPropagation();
-      items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
-    }
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.stopPropagation();  // not Previous/Next
-    if (e.key === 'Tab') setMenu(false);
-  });
-  const SYMBOLS = JSON.parse(document.getElementById('guide-symbols').textContent);
-  const ORDER = Object.keys(DATA);
-  const cards = Array.from(document.querySelectorAll('.card'));
-  const famSel = document.getElementById('f-family');
-  const objSel = document.getElementById('f-objective');
-  const search = document.getElementById('f-search');
-  const count = document.getElementById('f-count');
-  const empty = document.getElementById('empty');
-  const groupsEl = document.getElementById('groups');
-  const orderSel = document.getElementById('f-order');
-  let sections = Array.from(groupsEl.querySelectorAll('section.family'));
-  const dlg = document.getElementById('detail');
-  let family = 'all';
-  let current = null;
 
-  // in the order the page shows them now, so Previous and Next follow the chosen order
-  function visibleIds() {
-    return Array.from(groupsEl.querySelectorAll('.card')).filter(c => !c.hidden).map(c => c.dataset.id);
-  }
+def asset(name: str) -> str:
+    with open(os.path.join(ASSETS, name), encoding="utf-8", newline="") as fh:
+        return fh.read()
 
-  // A section with fewer cards than a row has columns spans only those, so the next can join it.
-  // Columns that fit, as the grid's repeat(auto-fill, minmax(176px, 1fr)) with a 14px gap lays them
-  // out; read from the width, since a span left from a wider layout adds implicit columns.
-  const colsNow = () => Math.max(1, Math.floor((groupsEl.clientWidth + 14) / (176 + 14)));
-  // The toggle turns packing off, one section per row; it is hidden where nothing could pair.
-  const packBtn = document.getElementById('f-pack');
-  let packOn = true;
-  try { packOn = localStorage.getItem('field-guide-pack') !== 'off'; } catch (e) {}
-  packBtn.setAttribute('aria-pressed', String(!packOn));
-  packBtn.addEventListener('click', () => {
-    packOn = !packOn;
-    packBtn.setAttribute('aria-pressed', String(!packOn));
-    try { localStorage.setItem('field-guide-pack', packOn ? 'on' : 'off'); } catch (e) {}
-    pack();
-  });
-  function pack() {
-    const cols = colsNow();
-    packBtn.hidden = cols < 3;
-    for (const s of sections) {
-      const n = s.querySelectorAll('.card:not([hidden])').length;
-      s.style.gridColumn = packOn && n && n < cols ? 'span ' + n : '';
-    }
-  }
-  let packCols = 0;
-  window.addEventListener('resize', () => {
-    const cols = colsNow();
-    if (cols !== packCols) { packCols = cols; pack(); }
-  });
 
-  function apply() {
-    const term = search.value.trim().toLowerCase();
-    const obj = objSel.value;
-    let shown = 0;
-    for (const c of cards) {
-      const d = DATA[c.dataset.id];
-      const ok = (family === 'all' || d.family === family || d.also.includes(family)) &&
-        (obj === 'all' || d.objective === obj || d.alsoObjectives.includes(obj)) &&
-        (!term || d.search.includes(term));
-      c.hidden = !ok;
-      if (ok) shown++;
-    }
-    for (const s of sections) s.hidden = !s.querySelector('.card:not([hidden])');
-    pack();
-    count.textContent = shown + (shown === 1 ? ' diagram' : ' diagrams');
-    empty.hidden = shown > 0;
-  }
+PAGE_CSS = asset("page.css")
 
-  famSel.addEventListener('change', () => { family = famSel.value; apply(); });
-  objSel.addEventListener('change', apply);
-  search.addEventListener('input', apply);
-  document.getElementById('clear').addEventListener('click', () => {
-    family = 'all';
-    famSel.value = 'all';
-    objSel.value = 'all';
-    search.value = '';
-    apply();
-  });
-
-  // The order: by family (as on the poster), by year in decades, by name, or by objective.
-  // The cards move between sections built here; the choice is remembered for this reader.
-  const cardById = {};
-  cards.forEach(c => { cardById[c.dataset.id] = c; });
-  const rank = id => ORDER.indexOf(id);
-  const FAMILIES = [];
-  ORDER.forEach(id => {
-    const d = DATA[id];
-    if (!FAMILIES.some(f => f.id === d.family)) FAMILIES.push({ id: d.family, title: d.familyTitle });
-  });
-  const OBJECTIVES = Array.from(objSel.options).filter(o => o.value !== 'all')
-    .map(o => ({ id: o.value, title: o.textContent }));
-  const byYear = sign => (a, b) => sign * (DATA[a].year - DATA[b].year) || rank(a) - rank(b);
-
-  function groupsFor(order) {
-    if (order === 'name') {
-      return [{ id: 'az', title: 'A to Z', ids: ORDER.slice().sort((a, b) =>
-        DATA[a].name.localeCompare(DATA[b].name, 'en', { sensitivity: 'base' })) }];
-    }
-    if (order === 'year' || order === 'year-desc') {
-      const out = [];
-      for (const id of ORDER.slice().sort(byYear(order === 'year' ? 1 : -1))) {
-        const decade = Math.floor(DATA[id].year / 10) * 10;
-        let g = out[out.length - 1];
-        if (!g || g.decade !== decade) {
-          g = { id: 'd' + decade, title: decade + 's', decade, ids: [], plain: true };
-          out.push(g);
-        }
-        g.ids.push(id);
-      }
-      return out;
-    }
-    if (order === 'objective') {
-      return OBJECTIVES.map(o => ({ id: 'o-' + o.id.replace(/\s+/g, '-'), title: o.title,
-        ids: ORDER.filter(id => DATA[id].objective === o.id).sort(byYear(1)) })).filter(g => g.ids.length);
-    }
-    return FAMILIES.map(f => ({ id: f.id, title: f.title, ids: ORDER.filter(id => DATA[id].family === f.id) }));
-  }
-
-  function arrange(order) {
-    groupsEl.textContent = '';
-    for (const g of groupsFor(order)) {
-      const sec = document.createElement('section');
-      sec.className = 'family';
-      sec.id = 'g-' + g.id;
-      sec.setAttribute('aria-labelledby', 'h-' + g.id);
-      const h = document.createElement('h2');
-      h.id = 'h-' + g.id;
-      h.textContent = g.title;
-      if (g.plain) h.className = 'plain';   // "1990s", not "1990S"
-      const grid = document.createElement('div');
-      grid.className = 'grid';
-      for (const id of g.ids) grid.append(cardById[id]);
-      sec.append(h, grid);
-      groupsEl.append(sec);
-    }
-    sections = Array.from(groupsEl.querySelectorAll('section.family'));
-    apply();
-  }
-
-  orderSel.addEventListener('change', () => {
-    arrange(orderSel.value);
-    try { localStorage.setItem('field-guide-order', orderSel.value); } catch (e) {}
-  });
-  let savedOrder = null;
-  try { savedOrder = localStorage.getItem('field-guide-order'); } catch (e) {}
-  if (savedOrder && savedOrder !== 'family' && Array.from(orderSel.options).some(o => o.value === savedOrder)) {
-    orderSel.value = savedOrder;
-    arrange(savedOrder);
-  }
-
-  function setText(id, text) {
-    document.getElementById(id).textContent = text || '';
-  }
-
-  function open(id) {
-    const d = DATA[id];
-    const card = document.querySelector('.card[data-id="' + id + '"]');
-    if (!d || !card) return;
-    current = id;
-    const svg = card.querySelector('svg').outerHTML.split('arr-' + id).join('arr-' + id + '-big');
-    document.getElementById('d-fig').innerHTML = svg;
-    // Family, any further families, then the year; a line breaks only between names.
-    const kicker = document.getElementById('d-kicker');
-    const keep = t => { const s = document.createElement('span'); s.className = 'nw'; s.textContent = t; return s; };
-    const also = d.alsoTitles.map((t, i) => (i ? '' : 'also ') + t + (i < d.alsoTitles.length - 1 ? ',' : ''));
-    kicker.replaceChildren();
-    [d.familyTitle, ...also, String(d.year)].forEach((t, i, all) => {
-      kicker.append(keep(t));
-      if (i < all.length - 1) kicker.append(i === 0 || i === all.length - 2 ? ' · ' : ' ');
-    });
-    setText('d-name', d.name);
-    setText('d-full', d.full);
-    document.getElementById('d-full').hidden = !d.full;
-    document.getElementById('d-cap').innerHTML = d.captionHtml;  // escaped by guide.py
-    setText('d-note', d.note);
-    document.getElementById('d-note').hidden = !d.note;
-    document.getElementById('d-summary').innerHTML = d.summaryHtml;
-    document.getElementById('d-read').innerHTML = d.readHtml;
-    setText('d-objective', d.objective + (d.objectiveNote ? ', ' + d.objectiveNote : '') +
-      (d.alsoObjectives.length ? '; also ' + d.alsoObjectives.join(', ') : ''));
-    document.getElementById('d-read-wrap').hidden = !d.read;
-    setMenu(false);
-    refreshMenu();
-    document.getElementById('d-math').innerHTML = d.objectiveMath;  // built and escaped by guide.py
-    // the key: only the cells and links this diagram uses
-    const key = document.getElementById('d-key');
-    key.textContent = '';
-    // cells in one column, links in the other
-    for (const [kind, list] of [['cells', d.key.cells], ['links', d.key.links]]) {
-      if (!list.length) continue;
-      const col = document.createElement('ul');
-      col.setAttribute('aria-label', kind === 'cells' ? 'Cells' : 'Links');
-      for (const k of list) {
-        const [svg, label] = SYMBOLS[kind][k];
-        const li = document.createElement('li');
-        li.innerHTML = svg;
-        li.append(label);
-        col.append(li);
-      }
-      key.append(col);
-    }
-    // Related panels, each a link that opens it here
-    const rel = document.getElementById('d-rel');
-    rel.textContent = '';
-    for (const g of d.related) {
-      const row = document.createElement('p');
-      const k = document.createElement('span');
-      k.className = 'k';
-      k.textContent = g.label + ':';
-      row.append(k);
-      g.ids.forEach((rid, i) => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.textContent = DATA[rid].name;
-        b.addEventListener('click', () => open(rid));
-        row.append(i ? ', ' : ' ', b);
-      });
-      rel.append(row);
-    }
-    document.getElementById('d-rel-wrap').hidden = !d.related.length;
-    const ul = document.getElementById('d-papers');
-    ul.textContent = '';
-    for (const p of d.papers) {
-      const li = document.createElement('li');
-      const a = document.createElement('a');
-      a.href = p.url;
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.textContent = p.title;
-      const src = document.createElement('span');
-      src.className = 'src';
-      src.textContent = p.source;
-      // Authors (year). Title. Source.
-      li.append(p.authors + ' (' + p.year + '). ', a, /[.?!]$/.test(p.title) ? ' ' : '. ', src);
-      ul.append(li);
-    }
-    const opening = !dlg.open;
-    if (opening) {
-      if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
-      // the dialog would focus its first link, a paper far down, and scroll to it; start at the
-      // title instead (Previous and Next keep focus on their button)
-      document.getElementById('d-name').focus({ preventScroll: true });
-    }
-    dlg.scrollTop = 0;  // every architecture opens at its top
-    dlg.classList.add('instant');  // the fade only eases in while scrolling
-    moreBelow();
-    requestAnimationFrame(() => requestAnimationFrame(() => dlg.classList.remove('instant')));
-    try { history.replaceState(null, '', '#' + id); } catch (e) {}
-  }
-
-  function close() {
-    if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open');
-  }
-
-  function step(delta) {
-    const ids = visibleIds();
-    const list = ids.length ? ids : ORDER;
-    const i = list.indexOf(current);
-    open(list[(i + delta + list.length) % list.length]);
-  }
-
-  dlg.addEventListener('close', () => {
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
-    const card = current && document.querySelector('.card[data-id="' + current + '"]');
-    if (card) card.focus();
-  });
-  dlg.addEventListener('click', e => { if (e.target === dlg) close(); });
-  // the fade above the buttons shows while more of the panel lies below
-  function moreBelow() {
-    dlg.classList.toggle('more', dlg.scrollTop + dlg.clientHeight < dlg.scrollHeight - 2);
-  }
-  dlg.addEventListener('scroll', moreBelow, { passive: true });
-  window.addEventListener('resize', () => { if (dlg.open) moreBelow(); });
-  dlg.addEventListener('cancel', e => {
-    if (!menu.hidden) { e.preventDefault(); setMenu(false); dlBtn.focus(); }
-  });
-  dlg.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !menu.hidden) { e.preventDefault(); e.stopPropagation(); setMenu(false); dlBtn.focus(); }
-  }, true);
-  dlg.addEventListener('pointerdown', e => {
-    if (!menu.hidden && !menu.contains(e.target) && !dlBtn.contains(e.target)) setMenu(false);
-  });
-  dlg.addEventListener('keydown', e => {
-    if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
-    if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
-  });
-  document.getElementById('d-prev').addEventListener('click', () => step(-1));
-  document.getElementById('d-next').addEventListener('click', () => step(1));
-  document.getElementById('d-close').addEventListener('click', close);
-  cards.forEach(c => c.addEventListener('click', () => open(c.dataset.id)));
-
-  // The theme: the page follows the reader's setting until the button is used, then
-  // remembers the choice for that reader.
-  const root = document.documentElement;
-  const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
-  const themeBtn = document.getElementById('theme');
-  function themeNow() {
-    const t = root.getAttribute('data-theme');
-    return t === 'light' || t === 'dark' ? t : (mq && mq.matches ? 'dark' : 'light');
-  }
-  function labelTheme() {
-    const label = themeNow() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
-    themeBtn.setAttribute('aria-label', label);
-    themeBtn.title = label;
-  }
-  themeBtn.addEventListener('click', () => {
-    const next = themeNow() === 'dark' ? 'light' : 'dark';
-    root.setAttribute('data-theme', next);
-    try { localStorage.setItem('field-guide-theme', next); } catch (e) {}
-    labelTheme();
-  });
-  if (mq && mq.addEventListener) mq.addEventListener('change', labelTheme);
-  new MutationObserver(labelTheme).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-  labelTheme();
-
-  apply();
-  const hash = decodeURIComponent(location.hash.slice(1));
-  if (hash && DATA[hash]) open(hash);
-
-  // Save the poster. On claude.ai the page asks the viewer's downloads capability, which
-  // shows its own confirmation; the buttons stay hidden wherever that isn't available.
-  (async () => {
-    const box = document.getElementById('save');
-    if (!box || box.dataset.mode !== 'artifact') return;
-    const host = window.claude;
-    if (!host || typeof host.use !== 'function') return;
-    let downloads = null;
-    try { downloads = await host.use('downloads'); } catch (e) { downloads = null; }
-    if (!downloads) return;
-    const status = document.getElementById('save-status');
-    const codeOf = e => String((e && (e.code || e.name)) || '');
-    const declined = e => /cancel|declin|abort|denied|reject|not_granted/i.test(codeOf(e));
-    const malformed = e => /invalid|type|argument|unsupported/i.test(codeOf(e));
-    box.hidden = false;
-    saveFile = async (name, blob) => {
-      try {
-        await downloads.save({ filename: name, data: blob });
-      } catch (e) {
-        if (declined(e) || !malformed(e)) throw e;
-        await downloads.save({ filename: name, data: new Uint8Array(await blob.arrayBuffer()) });
-      }
-    };
-    refreshMenu();
-    box.querySelectorAll('button[data-file]').forEach(btn => btn.addEventListener('click', async () => {
-      const name = btn.dataset.name;
-      status.textContent = 'Preparing ' + name + '…';
-      btn.disabled = true;
-      try {
-        const res = await fetch(btn.dataset.file);
-        if (!res.ok) throw Object.assign(new Error('load failed'), { code: 'load_failed' });
-        const blob = await res.blob();
-        try {
-          await downloads.save({ filename: name, data: blob });
-        } catch (e) {
-          if (declined(e) || !malformed(e)) throw e;
-          await downloads.save({ filename: name, data: new Uint8Array(await blob.arrayBuffer()) });
-        }
-        status.textContent = 'Saved ' + name;
-      } catch (e) {
-        if (codeOf(e) === 'load_failed') status.textContent = 'Couldn’t load the poster file. Reload the page and try again.';
-        else if (declined(e)) status.textContent = 'Not saved.';
-        else status.textContent = 'Couldn’t save the file. Try again in a moment.';
-      } finally {
-        btn.disabled = false;
-      }
-    }));
-  })();
-})();
-"""
+PAGE_JS = asset("page.js")
 
 
 def symbol_svg(kind: str, name: str) -> str:
@@ -2685,8 +2427,11 @@ def symbol_svg(kind: str, name: str) -> str:
 
 
 def legend_html(cells: list, links: list) -> str:
-    def li(kind, name, label):
-        return f"<li>{symbol_svg(kind, name)}{html.escape(label)}</li>"
+    def li(kind, name, label):  # each entry lights up the diagrams that use it (page script)
+        return (
+            f'<li data-k="{kind}:{name}" tabindex="0" role="button" aria-pressed="false">'
+            f"{symbol_svg(kind, name)}{html.escape(label)}</li>"
+        )
 
     groups = []
     for label, items in legend_groups(cells, links):
@@ -2746,21 +2491,45 @@ def license_html(doc: dict) -> str:
     )
 
 
+DOWNLOAD_ICON = (
+    '<svg class="i-dl" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+    '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg>'
+)
+CHEVRON_ICON = (
+    '<svg class="i-chev" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+    '<path d="m7 10 5 5 5-5"/></svg>'
+)
+
+
 def save_html(mode: str) -> str:
-    label = '<span class="eyebrow">Poster</span>'
+    """The title bar's Poster button and its menu of files. On its own the page links them,
+    opened in a new tab where the browser shows them; on claude.ai each is a button that hands
+    the file to the viewer's downloads capability, and the whole control stays hidden
+    wherever that isn't available."""
     if mode == "standalone":
-        links = "".join(  # opened in a new tab, where the browser shows them; saved from there
-            f'<a class="btn" href="../{src}" target="_blank" rel="noopener">{text}</a>'
-            for src, text in POSTER_FILES
+        items = "".join(
+            f'<a role="menuitem" href="../{src}" target="_blank" rel="noopener">{fmt_}'
+            f"<span>{note}</span></a>"
+            for src, fmt_, note in POSTER_FILES
         )
-        return f'<div class="save" id="save" data-mode="standalone">{label}{links}</div>'
-    buttons = "".join(
-        f'<button class="btn" type="button" data-file="{src}" data-name="{src}">{text}</button>'
-        for src, text in POSTER_FILES
+    else:
+        items = "".join(
+            f'<button type="button" role="menuitem" data-file="{src}" data-name="{src}">{fmt_}'
+            f"<span>{note}</span></button>"
+            for src, fmt_, note in POSTER_FILES
+        )
+    status = (
+        '<span class="save-status" id="save-status" role="status" aria-live="polite"></span>'
+        if mode != "standalone"
+        else ""
     )
     return (
-        f'<div class="save" id="save" data-mode="artifact" hidden>{label}{buttons}'
-        f'<span class="save-status" id="save-status" role="status" aria-live="polite"></span></div>'
+        f'<div class="save" id="save" data-mode="{mode}"{"" if mode == "standalone" else " hidden"}>'
+        '<button class="pm-btn" type="button" id="pm-btn" aria-haspopup="menu" aria-expanded="false" '
+        'aria-controls="pm-menu" aria-label="Download the poster" title="Download the poster">'
+        f"{DOWNLOAD_ICON}<span>Poster</span>{CHEVRON_ICON}</button>"
+        f'<div class="d-menu pm-menu" id="pm-menu" role="menu" aria-label="Download the poster" '
+        f"hidden>{items}</div>{status}</div>"
     )
 
 
@@ -2964,8 +2733,9 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
             mid = f"arr-{pid}"
             caption = caption_text(notes, pid, a)
             svg = (
-                f'<svg viewBox="0 0 {fmt(W)} {fmt(H)}" aria-hidden="true" focusable="false">'
-                f'<defs>{marker_def(mid, "currentColor")}</defs>{render_diagram(d, mid)}</svg>'
+                f'<svg viewBox="0 0 {fmt(W)} {fmt(H)}" aria-hidden="true" focusable="false" '
+                f'data-steps="{flow_count(d)}"{SEQ_ATTR if d.seq else ""}><defs>{marker_def(mid, "currentColor")}</defs>'
+                f"{render_diagram(d, mid, tags=True)}</svg>"
             )
             cards.append(
                 f'<button class="card" type="button" data-id="{pid}">{svg}'
@@ -2986,6 +2756,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                     *a.get("also_objectives", []),
                     s["title"],
                     *(titles[f] for f in a.get("also", [])),
+                    *a.get("aka", []),
                 ]
             )
             text = plain(text).lower()
@@ -3005,6 +2776,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 objectiveNote=a.get("objective_note", ""),
                 objectiveMath=math_html(a.get("objective_math") or OBJECTIVE_MATH[a["objective"]]),
                 alsoObjectives=a.get("also_objectives", []),
+                aka=a.get("aka", []),
                 related=related_of(doc, pid),
                 note=" ".join(notes[pid]) if pid in notes else "",
                 summary=plain(a["summary"].strip()),
@@ -3043,6 +2815,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <header class="masthead">
 <div class="titlebar"><h1>{html.escape(doc["title"])}</h1>
 {save_html(mode)}
+<button class="icon-btn" type="button" id="help" aria-label="What is a neural network?" title="What is a neural network?" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.9.7c0 1.7-2.5 2.2-2.5 3.8"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg></button>
 {source_button(doc)}<button class="icon-btn" type="button" id="theme" aria-label="Switch to dark mode" title="Switch to dark mode">{THEME_ICONS}</button></div>
 <div><p class="lede">{html.escape(doc["subtitle"])}</p>
 <p class="reading">{html.escape(doc["reading"])} Select a diagram for its explanation, key, and papers.</p></div>
@@ -3063,19 +2836,24 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <div class="empty" id="empty" hidden><span>No diagrams match these filters.</span>
 <button class="btn" type="button" id="clear">Clear filters</button></div>
 </main>
-<footer><span>{credit_html(doc)}</span><span>{html.escape(notice(doc))}{license_html(doc)}{repo_html(doc)} · Last updated <time datetime="{updated_date(doc).isoformat()}">{date_text(updated_date(doc))}</time></span></footer>
+<footer><span>{credit_html(doc)}</span><span>{html.escape(notice(doc))}{license_html(doc)}{repo_html(doc)} · Last updated <time datetime="{page_updated_date(doc).isoformat()}">{date_text(page_updated_date(doc))}</time></span></footer>
 </div>
+{primer_html(doc, diagrams)}
 <dialog id="detail" aria-labelledby="d-name">
 <div class="d-wrap">
 <div class="d-side">
 <div class="d-keybox"><h3 class="d-label">Key</h3><div class="d-key" id="d-key"></div></div>
-<div class="d-fig" id="d-fig"></div>
+<div class="d-tools"><h3 class="d-label">Diagram</h3>
+<div class="d-flowctl" id="d-flowctl" data-state="idle" hidden><button class="d-stop" type="button" id="d-stop" aria-label="Stop" title="Stop"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button><button class="d-play" type="button" id="d-play"><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6" width="4" height="12" rx="1"/><rect x="13.5" y="6" width="4" height="12" rx="1"/></svg><span>Step through</span></button></div>
 <button class="d-more" type="button" id="d-more" aria-label="Diagram actions" title="Diagram actions" aria-haspopup="menu" aria-expanded="false" aria-controls="d-menu" data-credit="{html.escape(panel_credit(doc))}" data-ink="{INK_LIGHT}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
 <div class="d-menu" id="d-menu" role="menu" aria-label="Diagram actions" hidden>
 <button type="button" role="menuitem" data-act="link">Copy link</button>
 <button type="button" role="menuitem" data-act="svg">Save as SVG</button>
 <button type="button" role="menuitem" data-act="png">Save as PNG</button>
+<div class="d-speed" id="d-speed" role="group" aria-label="Step-through speed"><span>Speed</span><button type="button" role="menuitemradio" aria-checked="false" data-speed="slow">Slow</button><button type="button" role="menuitemradio" aria-checked="true" data-speed="normal">Normal</button><button type="button" role="menuitemradio" aria-checked="false" data-speed="fast">Fast</button></div>
 </div>
+</div>
+<div class="d-fig" id="d-fig"></div>
 </div>
 <div class="d-text">
 <p class="d-kicker" id="d-kicker"></p>
@@ -3096,7 +2874,8 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 </dialog>
 <script type="application/json" id="guide-data">{data_json}</script>
 <script type="application/json" id="guide-symbols">{symbols_json}</script>
-<script>{PAGE_JS}</script>"""
+<script>
+{PAGE_JS}</script>"""
     icons = f'<link rel="icon" href="{favicon_data_uri()}" type="image/svg+xml">\n'
     if (
         mode == "standalone"
@@ -3114,7 +2893,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
         f'<link rel="preconnect" href="https://fonts.googleapis.com">\n'
         f'<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
         f'<link rel="stylesheet" href="{FONT_LINK}">\n'
-        f"<style>{PAGE_CSS}</style>\n"
+        f"<style>\n{PAGE_CSS}</style>\n"
         "<script>try{var t=localStorage.getItem('field-guide-theme');"
         "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>\n"
     )
@@ -3208,25 +2987,40 @@ def for_cairo(svg: str, faces: dict) -> str:
     return re.sub(r"<text\b[^>]*>", swap, svg)
 
 
-def chart_date(doc: dict, diagrams: dict, out: str) -> datetime.date:
-    """The day to print as "Last updated": the date of the last build, kept when this build
-    draws the poster and the page exactly as that one did, and today when anything changed.
-    So rebuilding without a change leaves dist/ as it was, and a change dates itself."""
+def chart_dates(doc: dict, diagrams: dict, out: str) -> tuple:
+    """The days to print as "Last updated", on the poster and on the page: each the date of
+    the last build, kept when this build draws it exactly as that one did, and today when it
+    changed. The poster and the page are dated apart, so a change to the page alone (its
+    explanations, primer or code) leaves the poster's date, and rebuilding without a change
+    leaves dist/ as it was."""
+    today = datetime.date.today()
+
+    def read(name):
+        try:
+            with open(os.path.join(out, name), encoding="utf-8") as fh:
+                return fh.read()
+        except OSError:
+            return None
+
+    poster, page = read(f"{POSTER}.svg"), read(os.path.join("web", "index.html"))
+    m = poster and re.search(r"Last updated (\d{1,2}) (\w+) (\d{4})", poster)
     try:
-        with open(os.path.join(out, "web", "index.html"), encoding="utf-8") as fh:
-            page = fh.read()
-        with open(os.path.join(out, f"{POSTER}.svg"), encoding="utf-8") as fh:
-            poster = fh.read()
-        last = datetime.date.fromisoformat(re.search(r'<time datetime="([\d-]+)">', page).group(1))
-    except (OSError, AttributeError, ValueError):
-        return datetime.date.today()
-    same = dict(doc, updated=last)
-    if (
-        poster_svg(same, diagrams, "light") == poster
-        and web_page(same, diagrams, "standalone") == page
-    ):
-        return last
-    return datetime.date.today()
+        last = datetime.date(int(m.group(3)), MONTHS.index(m.group(2)) + 1, int(m.group(1)))
+    except (AttributeError, TypeError, ValueError):
+        last = None
+    poster_day = (
+        last
+        if last and poster_svg(dict(doc, updated=last), diagrams, "light") == poster
+        else today
+    )
+    m = page and re.search(r'<time datetime="([\d-]+)">', page)
+    try:
+        last = datetime.date.fromisoformat(m.group(1))
+    except (AttributeError, TypeError, ValueError):
+        last = None
+    same = dict(doc, updated=poster_day, page_updated=last)
+    page_day = last if last and web_page(same, diagrams, "standalone") == page else today
+    return poster_day, page_day
 
 
 def main(argv=None):
@@ -3252,9 +3046,9 @@ def main(argv=None):
         sys.exit(1 if warns else 0)
 
     arch = doc["architectures"]
-    if doc.get("updated") is None:  # set by hand in architectures.yaml, it wins
-        doc["updated"] = chart_date(doc, diagrams, args.out)
-    print(f"{updated_text(doc)}")
+    if doc.get("updated") is None:  # set by hand in architectures.yaml, it wins for both
+        doc["updated"], doc["page_updated"] = chart_dates(doc, diagrams, args.out)
+    print(f"Poster: {updated_text(doc)}; page: last updated {date_text(page_updated_date(doc))}")
     for aid, d in diagrams.items():
         write(os.path.join(args.out, "panels", f"{aid}.svg"), panel_svg(d, arch[aid]["name"]))
     light, dark = poster_svg(doc, diagrams, "light"), poster_svg(doc, diagrams, "dark")
