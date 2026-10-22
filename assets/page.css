@@ -183,10 +183,13 @@ dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), s
   color: var(--ink); font: 500 12px/1 var(--display); padding: 7px 10px; cursor: pointer; }
 .p-new:hover { border-color: var(--muted); }
 /* pointing at a unit or a line: it and what feeds it stay, the rest fades; the sum is spelled out */
-.p-live .p-hits * { stroke: transparent; stroke-width: 10; fill: none; pointer-events: stroke; }
-.p-live [data-c] { cursor: default; }
-.p-live.pointing [data-e]:not(.on), .p-live.pointing [data-c]:not(.on) > * { opacity: 0.18; }
+:is(.p-live, .p-tips) .p-hits * { stroke: transparent; stroke-width: 10; fill: none; pointer-events: stroke; }
+:is(.p-live, .p-tips) [data-c] { cursor: default; }
+:is(.p-live, .p-tips).pointing [data-e]:not(.on), :is(.p-live, .p-tips).pointing [data-c]:not(.on) > * { opacity: 0.18; }
 .p-read { min-height: 2.9em; margin: 4px 0 0; font: 13px/1.45 var(--mono); color: var(--muted); }
+/* under a primer figure with its own step-through or tips: the controls, then the explanation */
+.p-fig-ctl { display: grid; gap: 4px; justify-items: start; }
+.p-tips .p-read { font: 14px/1.5 var(--body); min-height: 3em; }
 .p-names text { font: 9px var(--body); fill: var(--muted); }
 .p-key { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; max-width: 62ch; }
 .p-key li { display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; }
@@ -215,11 +218,14 @@ dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), s
 .d-key li:focus-visible, .legend li[data-k]:focus-visible { outline: 2px solid var(--ink); outline-offset: 0; }
 /* Step through: parts not reached yet fade, and light up in turn */
 .d-fig [data-s], .d-fig [data-on] { transition: opacity 0.25s; }
-.d-fig.flow [data-s].later, .d-fig.flow [data-on].later { opacity: 0.1; }
-.d-fig.flow [data-on].mid { opacity: 0.5; }  /* a hand-written step's cells read from */
-.d-fig.flow [data-on].past { opacity: 0.25; }  /* and cells lit in an earlier step */
+:is(.d-fig, .p-fig).flow [data-s].later, :is(.d-fig, .p-fig).flow [data-on].later { opacity: 0.1; }
+:is(.d-fig, .p-fig).flow [data-on].mid { opacity: 0.65; }  /* a hand-written step's cells read from */
+:is(.d-fig, .p-fig).flow [data-on].past { opacity: 0.3; }  /* and cells lit in an earlier step */
 /* while stepping, a cell lights once the lines drawing in have reached it */
-.d-fig.flow [data-k^="cell:"]:not(.later):not(.mid):not(.past) { transition-delay: calc(var(--draw, 600ms) * 0.7); }
+:is(.d-fig, .p-fig).flow [data-k^="cell:"]:not(.later):not(.mid):not(.past) { transition-delay: calc(var(--draw, 600ms) * 0.9); }  /* as its lines arrive */
+/* an output's stem past a return line, and the line up to it, light with the output, as one
+   long stem (data-late) */
+:is(.d-fig, .p-fig).flow [data-late]:not(.later):not(.mid):not(.past) { transition-delay: calc(var(--draw, 600ms) * 0.9); }
 /* the speed choices, one row in the drawing's menu */
 .d-speed { display: flex; align-items: center; gap: 2px; padding: 6px 8px 4px 12px; margin-top: 4px;
   border-top: 1px solid var(--rule); font: 13px var(--body); color: var(--muted); }
@@ -258,17 +264,26 @@ dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), s
 .d-menu button:hover, .d-menu button:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent);
   outline: none; }
 .d-text { min-width: 0; }
-.d-kicker { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0; }
+.d-head { display: flex; align-items: center; gap: 6px; min-height: 30px; margin: -6px 0 0; }
+.d-kicker { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0; flex: 1; }
+/* the entry's link, at the end of the kicker line: an icon, with a word when it has copied */
+.d-link { height: 30px; min-width: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 0 6px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted);
+  font: 12px var(--body); cursor: pointer; flex: none; }
+.d-link[hidden] { display: none; }
+.d-link svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.d-link:hover, .d-link:focus-visible { color: var(--ink); border-color: var(--rule); background: var(--bg); }
+.d-link-done:empty { display: none; }
 .d-kicker .nw { white-space: nowrap; }
 .d-text h2 { font-family: var(--display); font-weight: 500; font-size: 28px; line-height: 1.15; margin: 12px 0 6px; }
 .d-full { font-family: var(--display); font-size: 15px; }
 /* .d-text p would zero these margins, so they are set with .d-text's weight */
 .d-text .d-full { margin: 0 0 4px; }
-.d-text .d-cap { color: var(--muted); margin: 0 0 20px; }
-.d-text .d-note { font-size: 13px; color: var(--muted); margin: -12px 0 20px; max-width: 68ch; }
+.d-text .d-cap { color: var(--muted); margin: 0 0 24px; }
+.d-text .d-note { font-size: 13px; color: var(--muted); margin: -16px 0 24px; max-width: 68ch; }
 #d-name:focus { outline: none; }
 .d-text h3 { font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: 0.13em;
-  text-transform: uppercase; color: var(--muted); margin: 20px 0 4px; }
+  text-transform: uppercase; color: var(--muted); margin: 24px 0 4px; }
 .d-text p { margin: 0; max-width: 68ch; }
 /* Papers as a reference list: authors (year). Title, linked. Where it appeared. No bullets;
    a hanging indent, and a quiet underline that darkens on hover. */
@@ -295,16 +310,28 @@ dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), s
   position: sticky; bottom: 0; background: var(--bg); padding: 14px 0 calc(14px + env(safe-area-inset-bottom, 0px)); }
 /* When more of the panel lies below, a short fade above the buttons: the cut-off line fades out
    instead of being sliced, and the fade says there is more; it goes once the end is reached */
-.d-nav::before, .p-nav::before { content: ""; position: absolute; left: 0; right: 0; bottom: calc(100% + 1px); height: 28px;
+.d-nav::before, .p-nav::before { content: ""; position: absolute; left: 0; right: 0; bottom: calc(100% + 1px); height: 44px;
   background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 0%, transparent), var(--bg));
   pointer-events: none; opacity: 0; transition: opacity 0.15s; }
 dialog.more .d-nav::before, dialog.more .p-nav::before { opacity: 1; }
 dialog.instant .d-nav::before, dialog.instant .p-nav::before { transition: none; }  /* set at once on opening */
+/* and, at the bar's left, "More below": macOS may hide the scroll bar until the reader scrolls,
+   so the dialog says so itself; a click scrolls on by most of a screen */
+.nav-more { margin-right: auto; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px 0 2px; height: 32px;
+  border: 0; background: none; color: var(--muted); font: 13px var(--body); cursor: pointer;
+  opacity: 0; visibility: hidden; transition: opacity 0.15s, visibility 0.15s; }
+.nav-more svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.nav-more:hover { color: var(--ink); }
+dialog.more .nav-more { opacity: 1; visibility: visible; }
+dialog.instant .nav-more { transition: none; }
 @media (max-width: 760px) {
   .d-menu.pm-menu { left: auto; right: 0; }
   .d-wrap { grid-template-columns: 1fr; padding: 20px; gap: 16px; }
   dialog[open] > .d-wrap { grid-template-rows: auto auto 1fr; padding-bottom: 0; }
   dialog[open] .d-text { border-left: 0; margin-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 16px; }
+  .d-text h3 { margin-top: 20px; }
+  .d-text .d-cap { margin-bottom: 20px; }
+  .d-text .d-note { margin: -12px 0 20px; }
   .controls { margin-left: 0; }
 }
 @media (max-width: 520px) {

@@ -17,7 +17,7 @@ Each panel runs from input at the bottom to output at the top. A circle is one u
 | State: carries memory between steps | blue | an outer ring |
 | Mixing: mixes across positions | pink | a tick on each side |
 | Output: what the network produces | red | a stem above |
-| Network: a whole network, any architecture (e.g., a generator, a denoiser, an expert) | dark gray | a tiny network inside a square, in white |
+| Network: a whole network, any architecture (e.g., a generator, a denoiser, an expert) | dark gray | a tiny network inside a square, in white; an outlined square is the world outside (a reinforcement learner's environment) |
 
 ## Building it
 
@@ -57,8 +57,8 @@ Add an entry under `architectures:` and list its id in a section. Rows run from 
     diagram:
       rows:
         - {cell: [input, input, mask, input]}
-        - {cell: attention, n: 4, connect: full}
-        - {cell: attention, n: 4, connect: full}
+        - {cell: attention, n: 4, connect: full, style: cross}   # dashed: weights set by similarity
+        - {cell: attention, n: 4, connect: full, style: cross}
         - {cell: output, n: 4, connect: one, dim: [0, 1, 3]}
 ```
 

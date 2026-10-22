@@ -49,6 +49,22 @@
     });
   }
   const menu = document.getElementById('d-menu');
+  // The entry's link, in the popup's top corner: it names the whole entry, not the drawing, so
+  // it sits by the title rather than in the drawing's menu. It says so briefly when copied.
+  const linkBtn = document.getElementById('d-link');
+  const linkDone = linkBtn.querySelector('.d-link-done');
+  let linkTimer = null;
+  linkBtn.addEventListener('click', async () => {
+    if (!current) return;
+    try {
+      await navigator.clipboard.writeText(location.origin + location.pathname + '#' + current);
+      linkDone.textContent = 'Link copied';
+    } catch (err) {
+      linkDone.textContent = 'Couldn\u2019t copy';
+    }
+    clearTimeout(linkTimer);
+    linkTimer = setTimeout(() => { linkDone.textContent = ''; }, 1500);
+  });
   const standalone = (document.getElementById('save') || {}).dataset?.mode === 'standalone';
   function setMenu(open) {
     menu.hidden = !open;
@@ -59,7 +75,7 @@
   // which actions this page can offer: saving needs saveFile, a link needs a real address
   function refreshMenu() {
     menu.querySelectorAll('[data-act="svg"], [data-act="png"]').forEach(b => { b.hidden = !saveFile; });
-    menu.querySelector('[data-act="link"]').hidden = !standalone;
+    linkBtn.hidden = !standalone;
     dlBtn.hidden = !menu.querySelector('button:not([hidden])');
   }
   dlBtn.addEventListener('click', () => setMenu(menu.hidden));
@@ -70,13 +86,6 @@
     try {
       if (b.dataset.act === 'svg') await saveFile(base + '.svg', panelFile(id));
       if (b.dataset.act === 'png') await saveFile(base + '.png', await panelPng(id));
-      if (b.dataset.act === 'link') {
-        await navigator.clipboard.writeText(location.origin + location.pathname + '#' + id);
-        const label = b.textContent;
-        b.textContent = 'Link copied';
-        setTimeout(() => { b.textContent = label; }, 1500);
-        return;  // the menu stays open so the confirmation shows
-      }
     } catch (err) {}
     setMenu(false);
   });
@@ -102,10 +111,58 @@
   const groupsEl = document.getElementById('groups');
   const orderSel = document.getElementById('f-order');
   let sections = Array.from(groupsEl.querySelectorAll('section.family'));
+  // A primer figure with tips: pointing at a part (or tapping it) keeps it, and for a cell the
+  // lines into it, and fades the rest, and says what it does below. A part's text is found by
+  // its key ("x.2", "x.2 n1.0") or, failing that, its row's ("x", "x n1").
+  document.querySelectorAll('.p-tips').forEach(fig => {
+    const tips = JSON.parse(fig.dataset.tips);
+    const readEl = fig.querySelector('.p-read');
+    const HINT = readEl.textContent;
+    const row = k => k.split('.')[0];
+    const cells = {};
+    fig.querySelectorAll('[data-c]').forEach(e => { cells[e.dataset.c] = e; });
+    const lines = Array.from(fig.querySelectorAll('[data-e]'));
+    const tipFor = el => {
+      if (el.dataset.e) {
+        const [a, b] = el.dataset.e.split(' ');
+        return tips[a + ' ' + b] || tips[row(a) + ' ' + row(b)] || '';
+      }
+      return tips[el.dataset.c] || tips[row(el.dataset.c)] || '';
+    };
+    function point(el) {
+      fig.classList.toggle('pointing', !!el);
+      lines.forEach(l => l.classList.remove('on'));
+      Object.values(cells).forEach(c => c.classList.remove('on'));
+      if (!el) { readEl.textContent = HINT; return; }
+      el.classList.add('on');
+      if (el.dataset.e) el.dataset.e.split(' ').forEach(k => cells[k] && cells[k].classList.add('on'));
+      else lines.filter(l => l.dataset.e.split(' ')[1] === el.dataset.c).forEach(l => {
+        l.classList.add('on');
+        const a = cells[l.dataset.e.split(' ')[0]];
+        if (a) a.classList.add('on');
+      });
+      readEl.textContent = tipFor(el) || HINT;
+    }
+    const hits = document.createElementNS('http://www.w3.org/2000/svg', 'g');  // wide copies to point at
+    hits.setAttribute('class', 'p-hits');
+    lines.forEach(l => {
+      const h = l.cloneNode(false);
+      ['data-e', 'data-s', 'data-on', 'data-k', 'style', 'marker-end', 'opacity', 'class'].forEach(a => h.removeAttribute(a));
+      h.addEventListener('pointerenter', () => point(l));
+      h.addEventListener('pointerleave', () => point(null));
+      hits.append(h);
+    });
+    const first = Object.values(cells)[0];  // beneath the cells, so they can still be pointed at
+    first.closest('svg > *').before(hits);
+    Object.values(cells).forEach(c => {
+      c.addEventListener('pointerenter', () => point(c));
+      c.addEventListener('pointerleave', () => point(null));
+    });
+  });
   // The primer's live network: the inputs come from the sliders, and each other unit takes
   // the weighted sum of the units below it, squashed by a sigmoid. A unit's brightness shows
   // its activity; a line's width shows its weight's size and its shade the sign (gray
-  // subtracts). New weights draws a fresh set, as untrained. Pointing at a unit lights the
+  // subtracts). Randomize weights draws a fresh set, as untrained. Pointing at a unit lights the
   // lines into it and spells out its sum below; pointing at a line gives its weight and what it
   // carries. (Each line gets a wide invisible copy, so a thin one is easy to point at.)
   document.querySelectorAll('.p-live').forEach(fig => {
@@ -413,7 +470,8 @@
   // light up the parts of one drawing for these entries, fading the rest
   function lightDrawing(svg, sel) {
     svg.classList.toggle('hl', sel.size > 0);
-    svg.querySelectorAll('[data-k]').forEach(e => e.classList.toggle('on', sel.has(e.dataset.k)));
+    // a part may stand for two key entries (an output's stem that is also its loop's line)
+    svg.querySelectorAll('[data-k]').forEach(e => e.classList.toggle('on', e.dataset.k.split(' ').some(k => sel.has(k))));
   }
 
   // The panel's key and its drawing; a click elsewhere in the panel, other than on the
@@ -433,7 +491,7 @@
   const pageKey = legendBox && keyControl(legendBox, sel => {
     document.querySelectorAll('.card').forEach(card => {
       const svg = card.querySelector('svg');
-      const uses = [...sel].some(k => svg.querySelector('[data-k="' + k + '"]'));
+      const uses = [...sel].some(k => svg.querySelector('[data-k~="' + k + '"]'));
       card.classList.toggle('lg-out', sel.size > 0 && !uses);
       lightDrawing(svg, sel);
     });
@@ -448,32 +506,11 @@
     });
   }
 
-  // Step through: the parts of the drawing light up in the order data reaches them (data-s,
-  // from guide.py's flow_steps), then the loop, if any; everything shows again at the end.
-  const play = document.getElementById('d-play');
-  let flowTimer = null;
-  let pending = [];  // lines waiting for their slot in a cascade
-  function stopFlow() {
-    clearTimeout(flowTimer);
-    pending.forEach(clearTimeout);
-    pending = [];
-    flowTimer = null;
-    fig.classList.remove('flow');
-    fig.querySelectorAll('.later, .mid, .past').forEach(e => e.classList.remove('later', 'mid', 'past'));
-    fig.querySelectorAll('[data-lag]').forEach(e => { e.style.transitionDelay = ''; });
-    setFlowState('idle');
-  }
-  const flowCtl = document.getElementById('d-flowctl');
+  // Step through: the parts of a drawing light up in the order data reaches them (data-s,
+  // from guide.py's flow_steps), then the loop, if any; everything shows again at the end. The
+  // popup's drawing has one, and so may a primer figure: each gets its own controls (a Step
+  // through / Pause / Resume button and a stop), sharing the speed.
   const FLOW_LABELS = { idle: 'Step through', run: 'Pause', pause: 'Resume' };
-  function setFlowState(state) {
-    flowCtl.dataset.state = state;
-    play.querySelector('span').textContent = FLOW_LABELS[state];
-  }
-  let flowNext = null;  // the next step, kept while paused
-  document.getElementById('d-stop').addEventListener('click', () => stopFlow());
-  // A line lit at this step draws in along the way data travels, from the end it leaves to
-  // the end it reaches, its arrowhead last; a dashed or dotted line is revealed through a mask
-  // drawn the same way, so its dashes stay put. Cells fade in as the lines reach them (CSS).
   // The speed, chosen in the drawing's "⋯" menu and remembered: how long each step shows, and
   // how long its lines take to draw in (cells light as they arrive, via --draw in the CSS)
   const SPEEDS = { slow: [2000, 1200], normal: [1000, 600], fast: [500, 300] };
@@ -483,7 +520,7 @@
   function setSpeed(v) {
     speed = v;
     speedBox.querySelectorAll('[data-speed]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.speed === v)));
-    fig.style.setProperty('--draw', SPEEDS[v][1] + 'ms');
+    document.documentElement.style.setProperty('--draw', SPEEDS[v][1] + 'ms');  // every drawing's
   }
   setSpeed(speed);
   speedBox.addEventListener('click', e => {
@@ -496,9 +533,10 @@
   });
   const drawMs = () => SPEEDS[speed][1];
   let maskN = 0;
-  function drawIn(el, reverse, ms) {
+  function drawIn(el, reverse, ms, delay) {
     ms = ms || drawMs();
-    if (!(el instanceof SVGGeometryElement) || !el.closest('[data-k^="link:"]') || !el.isConnected) return;
+    delay = delay || 0;  // ms to wait, hidden, before drawing in
+    if (!(el instanceof SVGGeometryElement) || el.tagName === 'circle' || !el.closest('[data-k^="link:"]') || !el.isConnected) return;  // a gate's dot fades in
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     let L = 0;
     try { L = el.getTotalLength(); } catch (e) { return; }  // not drawn (the panel was closed)
@@ -530,86 +568,126 @@
     if ('both' in el.dataset) {  // from both ends at once, meeting in the middle
       pen.style.strokeDasharray = '0 ' + L + ' 0';
       pen.getBoundingClientRect();
-      pen.style.transition = 'stroke-dasharray ' + ms + 'ms ease-out';
+      pen.style.transition = 'stroke-dasharray ' + ms + 'ms linear ' + delay + 'ms';
       pen.style.strokeDasharray = L / 2 + ' 0 ' + L / 2;
     } else {
       pen.style.strokeDasharray = L + ' ' + L;
       pen.style.strokeDashoffset = reverse ? -L : L;
       pen.getBoundingClientRect();  // start from there
-      pen.style.transition = 'stroke-dashoffset ' + ms + 'ms ease-out';
+      pen.style.transition = 'stroke-dashoffset ' + ms + 'ms linear ' + delay + 'ms';
       pen.style.strokeDashoffset = 0;
     }
     setTimeout(() => {
       if (mask) { el.removeAttribute('mask'); mask.remove(); }
       else { pen.style.transition = pen.style.strokeDasharray = pen.style.strokeDashoffset = ''; }
       if (head) el.setAttribute('marker-end', head);
-    }, ms + 30);
+    }, delay + ms + 30);
   }
-  function runFlow() {
-    const svg = fig.querySelector('svg');
-    const n = svg ? +svg.dataset.steps : 0;
-    if (!n) return;
-    // start from nothing shown, at once: then even the first step lights in its order (a
-    // column's output after the lines that reach it), not over a drawing already lit
-    const parts = fig.querySelectorAll('[data-s], [data-on]');
-    parts.forEach(e => { e.style.transition = 'none'; e.classList.add('later'); });
-    fig.classList.add('flow');
-    fig.getBoundingClientRect();
-    parts.forEach(e => { e.style.transition = ''; });
-    setFlowState('run');
-    let i = 0;
-    const seq = 'seq' in svg.dataset;  // a hand-written flow: parts show at listed steps
-    // the steps that cascade, and the most slots in any, which share the step's time
-    const lags = Array.from(fig.querySelectorAll('[data-lag]')).flatMap(e => e.dataset.lag.split(' '));
-    const cascades = new Set(lags.map(t => +t.split(':')[0]));
-    const maxSlot = Math.max(0, ...lags.map(t => +t.split(':')[1]));
-    let slotMs = 0;
-    const has = (list, n) => (list || '').split(' ').includes(String(n));
-    const tick = () => {
-      slotMs = maxSlot ? SPEEDS[speed][0] / (maxSlot + 1.5) : 0;
-      if (seq) {
-        fig.querySelectorAll('[data-on]').forEach(e => {
-          const on = has(e.dataset.on, i), mid = has(e.dataset.mid, i);
-          // in a cascade step, each part waits for its slot: a cell lights in it, a line draws
-          // in the slot before the cell it reaches
-          const slot = +(((e.dataset.lag || '').split(' ').find(t => t.startsWith(i + ':')) || ':0').split(':')[1]);
-          const cascade = cascades.has(i);
-          const lag = cascade ? slot * slotMs : 0;
-          e.style.transitionDelay = on && cascade ? lag + 'ms' : '';
-          // a cell lit in an earlier step stays faintly, so what was produced stays in view
-          // (GPT's earlier outputs), as a pass that builds up keeps everything it reached
-          const past = !on && !mid && e.matches('[data-k^="cell:"]') &&
-            e.dataset.on.split(' ').some(t => t !== '' && +t < i);
-          e.classList.toggle('later', !on && !mid && !past);
-          e.classList.toggle('mid', mid);
-          e.classList.toggle('past', past);
-          // drawn in when it lights, and again when data turns back along it (Gibbs sampling)
-          const rev = has(e.dataset.rev, i);
-          if (on && !(i && has(e.dataset.on, i - 1) && has(e.dataset.rev, i - 1) === rev)) {
-            if (!cascade) drawIn(e, rev);
-            else pending.push(setTimeout(() => drawIn(e, rev, slotMs * 0.8), lag));
-          }
-        });
-      } else {
-        fig.querySelectorAll('[data-s]').forEach(e => {
-          e.classList.toggle('later', +e.dataset.s > i);
-          if (+e.dataset.s === i) drawIn(e, false);
-        });
-      }
-      i += 1;
-      const ms = SPEEDS[speed][0];  // read each step, so a new speed applies from the next
-      flowNext = i < n ? tick : stopFlow;
-      flowTimer = setTimeout(flowNext, i < n ? ms : 2 * ms);
-    };
-    tick();
+  // A line lit at this step draws in along the way data travels (drawIn, above). makeFlow sets
+  // up one drawing's step-through, run from its controls `ctl`.
+  // A line's timing within its step: the line from an output up past the return line is part
+  // of the output's stem, so it is not drawn in but fades in with the output (data-late); a line that is part of one flow (a line and the branches off it,
+  // data-t0/t1) draws over its share of the time, so each branch leaves as the line reaches it
+  function drawPart(e, rev) {
+    const ms = drawMs();
+    if ('late' in e.dataset) return;  // an output's extended stem: it fades in with the output (CSS)
+    else if ('t1' in e.dataset) drawIn(e, rev, Math.max(1, ms * (+e.dataset.t1 - +e.dataset.t0)), ms * +e.dataset.t0);
+    else drawIn(e, rev);
   }
-  // Pause holds the step on screen (lines already drawing finish); Resume goes on to the next
-  play.addEventListener('click', () => {
-    const state = flowCtl.dataset.state;
-    if (state === 'idle') runFlow();
-    else if (state === 'run') { clearTimeout(flowTimer); setFlowState('pause'); }
-    else { setFlowState('run'); flowNext(); }
-  });
+  function makeFlow(fig, ctl) {
+    const play = ctl.querySelector('.d-play');
+    let timer = null, next = null;  // the next step, kept while paused
+    let pending = [];  // lines waiting for their slot in a cascade
+    function setState(state) {
+      ctl.dataset.state = state;
+      play.querySelector('span').textContent = FLOW_LABELS[state];
+    }
+    function stop() {
+      clearTimeout(timer);
+      pending.forEach(clearTimeout);
+      pending = [];
+      timer = null;
+      fig.classList.remove('flow');
+      fig.querySelectorAll('.later, .mid, .past').forEach(e => e.classList.remove('later', 'mid', 'past'));
+      fig.querySelectorAll('[data-lag], [data-arrive]').forEach(e => { e.style.transitionDelay = ''; });
+      setState('idle');
+    }
+    function run() {
+      const svg = fig.querySelector('svg');
+      const n = svg ? +svg.dataset.steps : 0;
+      if (!n) return;
+      // start from nothing shown, at once: then even the first step lights in its order (a
+      // column's output after the lines that reach it), not over a drawing already lit
+      const parts = fig.querySelectorAll('[data-s], [data-on]');
+      parts.forEach(e => { e.style.transition = 'none'; e.classList.add('later'); });
+      fig.classList.add('flow');
+      fig.getBoundingClientRect();
+      parts.forEach(e => { e.style.transition = ''; });
+      setState('run');
+      let i = 0;
+      const seq = 'seq' in svg.dataset;  // a hand-written flow: parts show at listed steps
+      // the steps that cascade, and the most slots in any, which share the step's time
+      const lags = Array.from(fig.querySelectorAll('[data-lag]')).flatMap(e => e.dataset.lag.split(' '));
+      const cascades = new Set(lags.map(t => +t.split(':')[0]));
+      const maxSlot = Math.max(0, ...lags.map(t => +t.split(':')[1]));
+      let slotMs = 0;
+      const has = (list, n) => (list || '').split(' ').includes(String(n));
+      const tick = () => {
+        slotMs = maxSlot ? SPEEDS[speed][0] / (maxSlot + 1.5) : 0;
+        if (seq) {
+          fig.querySelectorAll('[data-on]').forEach(e => {
+            const on = has(e.dataset.on, i), mid = has(e.dataset.mid, i);
+            // in a cascade step, each part waits for its slot: a cell lights in it, a line draws
+            // in the slot before the cell it reaches
+            const slot = +(((e.dataset.lag || '').split(' ').find(t => t.startsWith(i + ':')) || ':0').split(':')[1]);
+            const cascade = cascades.has(i);
+            const lag = cascade ? slot * slotMs : 0;
+            e.style.transitionDelay = on && cascade ? lag + 'ms' : on && 'arrive' in e.dataset ? drawMs() * +e.dataset.arrive + 'ms' : '';
+            // a cell lit in an earlier step stays faintly, so what was produced stays in view
+            // (GPT's earlier outputs), as a pass that builds up keeps everything it reached
+            const past = !on && !mid && e.matches('[data-k^="cell:"]') &&
+              e.dataset.on.split(' ').some(t => t !== '' && +t < i);
+            e.classList.toggle('later', !on && !mid && !past);
+            e.classList.toggle('mid', mid);
+            e.classList.toggle('past', past);
+            // drawn in when it lights, and again when data turns back along it (Gibbs sampling)
+            const rev = has(e.dataset.rev, i);
+            if (on && !(i && has(e.dataset.on, i - 1) && has(e.dataset.rev, i - 1) === rev)) {
+              if (!cascade) drawPart(e, rev);
+              else pending.push(setTimeout(() => drawIn(e, rev, slotMs * 0.8), lag));
+            }
+          });
+        } else {
+          fig.querySelectorAll('[data-s]').forEach(e => {
+            e.classList.toggle('later', +e.dataset.s > i);
+            // a cell reached partway through a flow (a branch off a line) lights as it arrives
+            if ('arrive' in e.dataset) e.style.transitionDelay = +e.dataset.s === i ? drawMs() * +e.dataset.arrive + 'ms' : '';
+            if (+e.dataset.s === i) drawPart(e, false);
+          });
+        }
+        i += 1;
+        const ms = SPEEDS[speed][0];  // read each step, so a new speed applies from the next
+        next = i < n ? tick : stop;
+        timer = setTimeout(next, i < n ? ms : 2 * ms);
+      };
+      tick();
+    }
+    // Pause holds the step on screen (lines already drawing finish); Resume goes on to the next
+    play.addEventListener('click', () => {
+      const state = ctl.dataset.state;
+      if (state === 'idle') run();
+      else if (state === 'run') { clearTimeout(timer); setState('pause'); }
+      else { setState('run'); next(); }
+    });
+    ctl.querySelector('.d-stop').addEventListener('click', () => stop());
+    return { stop };
+  }
+  const flowCtl = document.getElementById('d-flowctl');
+  const popupFlow = makeFlow(fig, flowCtl);
+  function stopFlow() { popupFlow.stop(); }
+  const primerFlows = Array.from(document.querySelectorAll('.p-fig[data-flow]'))
+    .map(f => makeFlow(f, f.querySelector('.d-flowctl')));
+  primer.addEventListener('close', () => primerFlows.forEach(f => f.stop()));
 
   function setText(id, text) {
     document.getElementById(id).textContent = text || '';
@@ -752,6 +830,11 @@
     dlg.classList.toggle('more', dlg.scrollTop + dlg.clientHeight < dlg.scrollHeight - 2);
   }
   dlg.addEventListener('scroll', moreBelow, { passive: true });
+  // "More below" in a dialog's bottom bar scrolls it on by most of what shows
+  document.querySelectorAll('.nav-more').forEach(b => b.addEventListener('click', () => {
+    const box = b.closest('dialog');
+    box.scrollBy({ top: box.clientHeight * 0.8, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }));
   window.addEventListener('resize', () => { if (dlg.open) moreBelow(); });
   dlg.addEventListener('cancel', e => {
     if (!menu.hidden) { e.preventDefault(); setMenu(false); dlBtn.focus(); }
