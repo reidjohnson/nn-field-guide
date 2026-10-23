@@ -1,6 +1,6 @@
 # Neural Network Field Guide
 
-[![The Neural Network Field Guide: twelve of its diagrams under the title](dist/web/preview.png)](https://reidjohnson.github.io/nn-field-guide/)
+[![The Neural Network Field Guide: ten of its diagrams under the title](dist/web/preview.png)](https://reidjohnson.github.io/nn-field-guide/)
 
 **[See the guide](https://reidjohnson.github.io/nn-field-guide/)** · [Poster (PDF)](https://reidjohnson.github.io/nn-field-guide/neural-network-field-guide.pdf)
 
@@ -8,7 +8,7 @@ A reference chart of neural network architectures and training schemes, from the
 
 ## How to read it
 
-Each panel runs from input at the bottom to output at the top. A circle is one unit (in sequence models, one token's vector); a square is something bigger, such as an image patch or a whole network (a gray box). Faded cells and links take little or no part in the step shown. The poster's legend and the page explain every mark; in short:
+Each panel runs from input at the bottom to output at the top. A circle is one unit (in sequence models, one token's vector); a square is something bigger, such as an image patch or a whole network (a gray box). Faded cells and links take little or no part in the step shown. The poster's legend and the page explain every mark, and the page's glossary explains the terms (attention, convolution, gates, and more), several with a diagram that steps through how they work. In short, each cell's color and mark give its job:
 
 | Job | Color | Mark |
 |---|---|---|
@@ -18,6 +18,17 @@ Each panel runs from input at the bottom to output at the top. A circle is one u
 | Mixing: mixes across positions | pink | a tick on each side |
 | Output: what the network produces | red | a stem above |
 | Network: a whole network, any architecture (e.g., a generator, a denoiser, an expert) | dark gray | a tiny network inside a square, in white; an outlined square is the world outside (a reinforcement learner's environment) |
+
+And each line's style gives what it carries:
+
+| Link | Line | Meaning |
+|---|---|---|
+| Connection | thin solid line | a learned weight from one cell to another |
+| Skip connection | solid elbow beside the layers | data carried around one or more layers, then added or joined back |
+| Data passed on or fed back | arrow | state passed to the next step (straight), or an output fed back to run the network again (elbow) |
+| Gate | dotted line ending at a dot | a value from 0 to 1 that scales the arrow it meets at the dot |
+| Similarity score | dashed line | a weight set by how well two things match, not learned: attention's reads, and comparisons such as CLIP's |
+| Learnable function | wavy line | a whole learned function on the connection, not a single weight (KAN) |
 
 ## Building it
 

@@ -35,7 +35,7 @@ import os
 import re
 import subprocess
 import sys
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 
 import yaml
@@ -179,6 +179,28 @@ CELLS = OrderedDict(
 # flow: the straight arrow carries state, a message, or data from one part to another, and
 # the elbow arrow carries an output back to the input to run the network again. A gate is
 # dotted and acts at a dot on a state arrow.
+# a glossary figure's colored lines (contrastive learning): matched pairs pulled together, the
+# rest pushed apart; the page sets them again for dark mode
+TONES = {"pull": PALETTE["green"][1], "push": PALETTE["red"][1]}
+# the same lines on a dark page: green and blue take their lighter fill, red a lighter red
+DARK_LINES = {"green": PALETTE["green"][0], "blue": PALETTE["blue"][0], "red": "#E5673E"}
+
+
+def figure_palette_css() -> str:
+    """The palette as the page's CSS variables, for the glossary figures' own parts (a chart's
+    curves and bars, a plane's arrows and band): --fig-<hue>-fill and --fig-<hue>-line as the
+    cells use them, and --fig-<hue> for a colored line, lighter on a dark page."""
+    light = "".join(
+        f" --fig-{h}-fill: {f}; --fig-{h}-line: {l};" for h, (f, l) in PALETTE.items()
+    ) + "".join(f" --fig-{h}: {PALETTE[h][1]};" for h in DARK_LINES)
+    dark = "".join(f" --fig-{h}: {c};" for h, c in DARK_LINES.items())
+    return (
+        f":root {{{light} }}\n"
+        f':root[data-theme="dark"] {{{dark} }}\n'
+        f'@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{{dark} }} }}\n'
+    )
+
+
 LINKS = OrderedDict(
     [
         # in legend order: plain lines, then arrows (with the gate after the arrow it acts on),
@@ -359,6 +381,7 @@ class Seg:
     late: bool = False  # in the step-through, part of an output's stem: lit with it (data-late)
     t0: float = None  # in the step-through, when it starts and ends drawing in, as shares of
     t1: float = None  # the draw time: a branch starts as the line it leaves reaches it
+    tone: str = ""  # a glossary figure's colored line: "pull" (green) or "push" (red)
 
 
 @dataclass
@@ -375,6 +398,16 @@ class Diagram:
     stem_cells: list = field(default_factory=list)  # the output each of those stems belongs to
     steps: dict = field(default_factory=dict)  # cell -> its step in the data flow (flow_steps)
     seq: list = field(default_factory=list)  # a hand-written step-through: (from, to) cell sets
+    say: list = field(default_factory=list)  # a line of text per hand-written step (glossary)
+    hold: list = field(default_factory=list)  # per hand-written step: cells kept lit (clamped)
+    slide: tuple = ()  # cells that move as one, with their lines: (keys, step, offset per step)
+    ghosts: bool = False  # at rest, faint copies of the sliding cells at each place they go
+    focus: dict = field(
+        default_factory=dict
+    )  # a glossary figure's subject, the rest faded at rest
+    notes: list = field(
+        default_factory=list
+    )  # a glossary figure's braces and arrows, at the right
 
 
 def fmt(v: float) -> str:
@@ -484,7 +517,7 @@ def assign_mark_dirs(d) -> None:
         sx, sy = sum(v[0] for v in vecs), sum(v[1] for v in vecs)
         if math.hypot(sx, sy) < 0.35:
             c.mark_dir = default
-        elif abs(sx) > abs(sy):
+        elif abs(sx) >= abs(sy) - 1e-9:  # a tie goes sideways, clear of the rows above and below
             c.mark_dir = (-math.copysign(1.0, sx), 0.0)
         else:
             c.mark_dir = (0.0, -math.copysign(1.0, sy))
@@ -525,6 +558,24 @@ def build_diagram(arch_id: str, spec: dict) -> Diagram:
             (cells_of(d, st.get("from", [])), cells_of(d, st["to"]), st.get("within", False))
             for st in flow
         ]
+        d.say = [st.get("say", "") for st in flow] if any("say" in st for st in flow) else []
+        d.hold = [cells_of(d, st.get("hold", [])) for st in flow]
+        if spec.get("focus"):  # what the figure is about: at rest, everything else is faded
+            fo = spec["focus"]
+            d.focus = dict(
+                cells=cells_of(d, fo.get("cells", [])),
+                styles=set(fo.get("styles", [])),
+                into=fo.get("into", False),
+                lines=fo.get(
+                    "lines", True
+                ),  # false: every line fades at rest, only the cells stand out
+            )
+        d.notes = spec.get("notes", [])
+        # one filter moved along, step by step, rather than drawn at each place
+        if spec.get("slide"):
+            sl = spec["slide"]
+            d.slide = (cells_of(d, sl["cells"]), float(sl["by"]), list(sl["at"]))
+            d.ghosts = bool(sl.get("ghosts"))
     elif flow:
         d.steps = flow_steps(d)
     d.segs = [s for s in d.segs if s.style != "_flow"]  # flow-only edges, never drawn
@@ -561,7 +612,7 @@ def cells_of(d: Diagram, refs) -> set:
 def seq_marks(d: Diagram, keys: tuple) -> str:
     """For a hand-written flow, the steps at which a part shows: data-on where it is one of
     the cells updated (or a line into one, or with `within`, a line between two of them),
-    data-mid where it is a cell read from, and data-rev where a line carries data against the
+    data-mid where it is a cell read from (a step's `hold` cells stay on, without their lines), and data-rev where a line carries data against the
     way it is drawn (from its second end to its first), so the page draws it in from there.
     In a step with `within`, data-lag gives each part its place in the cascade up the cells
     it updates ("step:slot"): a cell lights in its slot, a line draws in the slot before the
@@ -570,12 +621,15 @@ def seq_marks(d: Diagram, keys: tuple) -> str:
     for i, (src, dst, within) in enumerate(d.seq):
         slots = seq_slots(d, dst) if within else {}
         if len(keys) == 1:
-            if keys[0] in dst:
+            if keys[0] in dst or (d.hold and keys[0] in d.hold[i]):
                 on.append(i)
                 if slots.get(keys[0]):
                     lag.append(f"{i}:{slots[keys[0]]}")
             elif keys[0] in src:
                 mid.append(i)
+        elif len(keys) == 2 and d.slide and (set(keys) & d.slide[0]):
+            if set(keys) & d.slide[0] & dst:  # a sliding filter's lines show with it
+                on.append(i)
         elif len(keys) == 2:
             a, b = keys
             joins = (a in src and b in dst) or (b in src and a in dst)
@@ -746,7 +800,10 @@ def layout(arch_id: str, spec: dict) -> Diagram:
                 float(x),
                 float(y),
                 dim_op if k in dim else 1.0,
-                marks=r.get("marks", True),
+                # false: no group marks; a list: per cell (a sampler's in-between points)
+                marks=(
+                    r["marks"][k] if isinstance(r.get("marks"), list) else r.get("marks", True)
+                ),
             )
             keys.append(key)
         groups[gid] = keys
@@ -760,6 +817,7 @@ def layout(arch_id: str, spec: dict) -> Diagram:
             connect(d, groups[src], groups[gid], r["connect"], r.get("style", "link"), r)
         prev = gid
     for link in spec.get("links", []):
+        n = len(d.segs)
         connect(
             d,
             groups[link["from"]],
@@ -768,6 +826,8 @@ def layout(arch_id: str, spec: dict) -> Diagram:
             link.get("style", "link"),
             link,
         )
+        for s in d.segs[n:]:  # a glossary figure may color a link: pulled together, pushed apart
+            s.tone = link.get("tone", "")
     prev = None
     for gid, r in order:
         if "chain" in r:
@@ -1040,7 +1100,8 @@ def whole_loop(d: Diagram, lp: dict):
     """The whole output row fed back to the whole input row, as the sampler does each step: a
     line up from every output to a line above them, down the side (outside any skips), and
     beneath the inputs, with an arrow up into each, FEED_LEN long like ViT's patch feed. The lines take the place of the rows' stems; each output keeps its stem past the top
-    line, since the result leaves on the last step."""
+    line, since the result leaves on the last step, and each input its stem past the bottom
+    line, since the first step's data comes in from outside."""
     ka, kb = ref(d, lp["from"]), ref(d, lp["to"])
     ga = next(g for g in d.groups.values() if ka in g)
     gb = next(g for g in d.groups.values() if kb in g)
@@ -1054,30 +1115,36 @@ def whole_loop(d: Diagram, lp: dict):
     skips = [x for s in d.segs if s.style == "skip" for x, _ in s.pts]
     if skips and max(skips) > x_run - 6:
         x_run = max(skips) + 8.0
-    via = d.cells[ref(d, lp["via"])] if lp.get("via") else None
-    if via:  # down the side into the cell, then on from it to the inputs
-        via.x, via.marks = x_run, False
-        y_in = via.y - extent(via, 0.0, -1.0) - GAP
-        y_out = via.y + extent(via, 0.0, 1.0) + GAP
-        path, samples = rounded_path([(outs[0].x, y_top), (x_run, y_top), (x_run, y_in)], BEND)
+    vias = lp.get("via") or []
+    if vias and not isinstance(vias[0], list):
+        vias = [vias]  # one cell, or a list of them in order down the side
+    vias = [d.cells[ref(d, v)] for v in vias]
+    if vias:  # down the side into each cell in turn, then on from the last to the inputs
         near = tuple(ga) + tuple(gb)
-        d.segs.append(  # lights with the cell it reaches, which follows the outputs
-            Seg("loop", samples, d=path, near=near, ends=(via.key,), arrow=True, dst=via.key)
-        )
-        d.segs.append(Seg("_flow", [], src=tuple(ga), dst=via.key))
+        y_prev, x_prev = y_top, outs[0].x
+        for i, via in enumerate(vias):
+            via.x, via.marks = x_run, False
+            y_in = via.y - extent(via, 0.0, -1.0) - GAP
+            if i == 0:  # along the top and down the side
+                pts, ends = [(x_prev, y_prev), (x_run, y_prev), (x_run, y_in)], (via.key,)
+            else:  # on down from the cell before
+                pts, ends = [(x_run, y_prev), (x_run, y_in)], (vias[i - 1].key, via.key)
+            path, samples = rounded_path(pts, BEND)
+            src = tuple(ga) if i == 0 else (vias[i - 1].key,)
+            d.segs.append(  # lights with the cell it reaches, which follows the one before
+                Seg("loop", samples, d=path, near=near, ends=ends, arrow=True, dst=via.key)
+            )
+            d.segs.append(Seg("_flow", [], src=src, dst=via.key))
+            y_prev = via.y + extent(via, 0.0, 1.0) + GAP
+        via = vias[-1]
+        y_out = y_prev
         path, samples = rounded_path([(x_run, y_out), (x_run, y_bot), (ins[0].x, y_bot)], BEND)
-        run_in = (y_bot - y_out) + (x_run - ins[0].x)  # from the cell to the last input
         d.segs.append(Seg("loop", samples, d=path, near=near, ends=(via.key,)))
-        main = d.segs[-1]
-        back = [(y_bot - y_out) + (x_run - c.x) for c in ins]  # how far along it each input is
     else:
         path, samples = rounded_path(
             [(outs[0].x, y_top), (x_run, y_top), (x_run, y_bot), (ins[0].x, y_bot)], BEND
         )
-        run_in = (x_run - outs[0].x) + (y_bot - y_top) + (x_run - ins[0].x)
         d.segs.append(Seg("loop", samples, d=path, near=tuple(ga) + tuple(gb)))
-        main = d.segs[-1]
-        back = [(x_run - outs[0].x) + (y_bot - y_top) + (x_run - c.x) for c in ins]
     for c in outs:
         bot = c.y - extent(c, 0.0, -1.0) - GAP
         d.segs.append(  # leaves with its output, which the step-through lights it with (dst)
@@ -1094,22 +1161,21 @@ def whole_loop(d: Diagram, lp: dict):
             ((c.x, y_top - MARK_GAP), (c.x, y_top - MARK_GAP - STEM), c.opacity, c.kind)
         )
         d.stem_cells.append(c.key)  # lit in its output's step, not the loop's
-    # the step-through draws the way back as one flow: each arrow up into an input leaves the
-    # line as the line reaches it, so the first input is reached last
-    arrow_len = y_bot - min(c.y + extent(c, 0.0, 1.0) + GAP for c in ins)
-    total = run_in + arrow_len
-    main.t0, main.t1 = 0.0, run_in / total
-    for c, b in zip(ins, back):
+    # the lines up into the inputs belong to the inputs' stems, as the risers to the outputs':
+    # they light with the inputs (the data comes in from outside too); their arrowheads show
+    # only once the way back has drawn in along the bottom line to meet them
+    for c in ins:  # and each input keeps its stem past the bottom line, as data also comes in
+        d.stems.append(
+            ((c.x, y_bot + MARK_GAP), (c.x, y_bot + MARK_GAP + STEM), c.opacity, c.kind)
+        )
+        d.stem_cells.append(c.key)
+    for c in ins:
         top = c.y + extent(c, 0.0, 1.0) + GAP
-        d.segs.append(
-            Seg(
-                "loop",
-                [(c.x, y_bot), (c.x, top)],
-                ends=(c.key,),
-                arrow=True,
-                t0=b / total,
-                t1=(b + y_bot - top) / total,
-            )
+        d.segs.append(  # with the stem below it, part of the input's stem: lit with the input
+            Seg("loop", [(c.x, y_bot), (c.x, top)], ends=(c.key,), dst=c.key, late=True)
+        )
+        d.segs.append(  # its arrowhead, which shows once the way back reaches it
+            Seg("loop", [(c.x, top + 1.0), (c.x, top)], ends=(c.key,), arrow=True, t0=0.85, t1=1.0)
         )
 
 
@@ -1453,6 +1519,104 @@ PRIMER_FLOW = (  # a primer figure's Step through button and stop, as on the pop
 )
 
 
+FIGURE_SCALE = 1.6  # a primer or glossary figure's pixels per unit of the panels' drawing
+
+
+def figure_notes(d: Diagram, marker: str) -> tuple:
+    """A glossary figure's notes, set at the right of the drawing: a brace beside rows that
+    names them as one part (an encoder), or an arrow along rows that says which way something
+    runs (the error passed back). Returns the SVG and the notes' right edge (0 without notes)."""
+    if not d.notes:
+        return "", 0.0
+    right = max(c.x + extent(c, 1.0, 0.0) for c in d.cells.values())
+    right = max([right] + [p[0] for s in d.segs for p in s.pts])
+    x = right + 12.0
+
+    def row_y(r):
+        # a row (its first cell), or one cell by [row, index]
+        return (
+            d.cells[d.groups[r][0]].y
+            if isinstance(r, str) and r in d.groups
+            else d.cells[ref(d, r)].y
+        )
+
+    out, widest = [], 0.0
+    for n in d.notes:
+        a, b = row_y(n["from"]), row_y(n["to"])
+        lo, hi = min(a, b), max(a, b)
+        if n.get("arrow"):  # from the first row toward the second, its head at the second
+            step = 6.0 if b < a else -6.0
+            line = (
+                f'<line x1="{fmt(x)}" y1="{fmt(a - step)}" x2="{fmt(x)}" y2="{fmt(b + step)}" '
+                f'marker-end="url(#{marker})"/>'
+            )
+        else:  # a brace: a line with short feet toward the drawing, its ends at the rows' cells
+            inset = n.get("inset", 0.0)
+            t, u = lo - R + inset, hi + R - inset
+            line = f'<path d="M{fmt(x - 3)} {fmt(t)}H{fmt(x)}V{fmt(u)}H{fmt(x - 3)}"/>'
+        out.append(line)
+        out.append(
+            f'<text x="{fmt(x + 6)}" y="{fmt((lo + hi) / 2 + 3)}" stroke="none">'
+            f'{html.escape(n["label"])}</text>'
+        )
+        widest = max(widest, text_width(n["label"], "body", 9))
+    svg = (
+        '<g class="p-names p-notes" fill="none" stroke="currentColor" stroke-width="0.9">'
+        + "".join(out)
+        + "</g>"
+    )
+    return svg, x + 6 + widest
+
+
+def slide_parts(drawing: str) -> str:
+    """The markup of a drawing's sliding parts (data-slide): each line, and each cell's whole
+    group, without the attributes that step through them."""
+    out, i = [], 0
+    while True:
+        j = drawing.find(' data-slide=""', i)
+        if j < 0:
+            break
+        a = drawing.rfind("<", 0, j)
+        if drawing.startswith("<g", a):  # a cell: its group, to the matching close
+            depth, k = 0, a
+            while True:
+                m = re.compile(r"<g[ >]|</g>").search(drawing, k)
+                depth += 1 if m.group(0) != "</g>" else -1
+                k = m.end()
+                if depth == 0:
+                    break
+            out.append(drawing[a:k])
+        else:
+            k = drawing.index(">", j) + 1
+            out.append(drawing[a:k])
+        i = k
+    return re.sub(r' data-(?:on|slide|mid|lag|rev|k|s|arrive)="[^"]*"', "", "".join(out))
+
+
+def slide_ghosts(d: Diagram, drawing: str, marker: str) -> str:
+    """At rest, a sliding figure's later places (convolution): faint copies of its sliding
+    parts at each, and an arrow from the first toward the next, saying which way it goes.
+    Hidden while stepping, when the parts themselves move."""
+    keys, by, at = d.slide
+    parts = slide_parts(drawing)
+    copies = "".join(
+        f'<g transform="translate({fmt(by * a)} 0)">{parts}</g>'
+        for a in sorted({a for a in at if a})
+    )
+    copies = (  # drawn as the lines are, which take their stroke from the group they sit in
+        '<g fill="none" stroke="currentColor" stroke-width="0.8" stroke-linecap="round">'
+        + copies
+        + "</g>"
+    )
+    c = min((d.cells[k] for k in keys), key=lambda c: c.y)  # the slider itself, above its lines
+    x1, x2 = c.x + extent(c, 1.0, 0.0) + 3.0, c.x + by - extent(c, -1.0, 0.0) - 3.0
+    arrow = (
+        f'<line class="p-ghost-arrow" x1="{fmt(x1)}" y1="{fmt(c.y)}" x2="{fmt(x2)}" '
+        f'y2="{fmt(c.y)}" stroke="currentColor" stroke-width="0.9" marker-end="url(#{marker})"/>'
+    )
+    return f'<g class="p-ghost">{copies}</g>{arrow}'
+
+
 def primer_figure(
     d: Diagram, labels: list, live: int = 0, flow: bool = False, tips: dict | None = None
 ) -> str:
@@ -1466,15 +1630,28 @@ def primer_figure(
         f'<text x="{fmt(lx)}" y="{fmt(y + 3.5)}" text-anchor="end">{html.escape(t)}</text>'
         for y, t in zip(rows, labels)
     )
-    x0 = lx - max(
-        62.0, 6.2 * max((len(t) for t in labels), default=0)
-    )  # room for the longest name
+    # the figure is cropped to what it draws (its row names, the drawing, any notes) and set
+    # at one scale, so every primer and glossary figure is drawn the same size and centers as
+    # a whole
+    lo, hi = x_span(d)
+    named = max((text_width(t, "body", 9) for t in labels), default=0.0)
+    x0 = min(lo, lx - named) - 4.0
     marker = f"arr-{d.id}"
+    notes, right = figure_notes(d, marker)
+    x1 = max(hi, right) + 4.0
+    wider = f' style="width: {FIGURE_SCALE * (x1 - x0):.0f}px; max-width: 100%"'
     cls = "p-fig" + (" p-live" if live else "") + (" p-tips" if tips else "")
-    data = (' data-flow=""' if flow else "") + (
-        f' data-tips="{html.escape(json.dumps(tips, ensure_ascii=False))}"' if tips else ""
+    say = json.dumps([prose_html(t) for t in d.say], ensure_ascii=False)
+    data = (
+        (' data-flow=""' if flow else "")
+        + (f' data-say="{html.escape(say)}"' if flow and d.say else "")
+        + (f' data-tips="{html.escape(json.dumps(tips, ensure_ascii=False))}"' if tips else "")
     )
-    steps = f' data-steps="{flow_count(d)}"' if flow else ""
+    steps = (f' data-steps="{flow_count(d)}"' + (SEQ_ATTR if d.seq else "")) if flow else ""
+    if flow and d.slide:
+        steps += (
+            f' data-slide-by="{fmt(d.slide[1])}" data-slide-at="{" ".join(map(str, d.slide[2]))}"'
+        )
     drawing = render_diagram(
         d, marker, tags=flow, weights=live_weights(d, live) if live else None, named=bool(tips)
     )
@@ -1484,6 +1661,11 @@ def primer_figure(
             '<div class="p-fig-ctl">'
             + (PRIMER_FLOW if flow else "")
             + (
+                '<p class="p-say" aria-live="polite">Press Step through to watch it work.</p>'
+                if flow and d.say
+                else ""
+            )
+            + (
                 '<p class="p-read" aria-live="polite">Point at a part to see what it does.</p>'
                 if tips
                 else ""
@@ -1491,10 +1673,13 @@ def primer_figure(
             + "</div>"
         )
     return (
-        f'<figure class="{cls}"{data}><svg viewBox="{fmt(x0)} 0 '
-        f'{fmt(W - x0)} {fmt(H)}" role="img" aria-label="{html.escape(", ".join(labels))}"{steps}>'
+        f'<figure class="{cls}"{data}><svg{wider} viewBox="{fmt(x0)} 0 '
+        f'{fmt(x1 - x0)} {fmt(H)}" role="img" aria-label="{html.escape(", ".join(labels))}"{steps}>'
         f'<defs>{marker_def(marker, "currentColor")}</defs><g class="p-names">{names}</g>'
-        f"{drawing}</svg>" + (primer_live(d) if live else "") + below + "</figure>"
+        f"{slide_ghosts(d, drawing, marker) if d.ghosts else ''}{drawing}{notes}</svg>"
+        + (primer_live(d) if live else "")
+        + below
+        + "</figure>"
     )
 
 
@@ -1536,7 +1721,662 @@ def primer_key(items: list, groups: dict | None = None) -> str:
 
 def figure_diagrams(doc: dict) -> dict:
     """The primer's own drawings (`figures`), built like panels but shown only in the primer."""
-    return {k: build_diagram(k, spec) for k, spec in doc.get("figures", {}).items()}
+    return {
+        k: build_diagram(k, spec)
+        for k, spec in doc.get("figures", {}).items()
+        if not {"plane", "chart", "bars"} & set(spec)
+    }
+
+
+PLANE_BOX = 136.0  # a plane figure's frame: a square this wide, in the drawing's units
+PLANE_X0, PLANE_Y0 = 12.0, 143.0  # its bottom left corner
+PLANE_SHAPES = [
+    "circle",
+    "square",
+    "triangle",
+]  # a plane figure's groups of points (clusters), in order
+
+
+def plane_xy(p: dict, u: float, v: float) -> tuple:
+    """A point of a plane figure's input space in the drawing's units: its `range` (each input
+    -0.35 to 1.35 if not given, so 0 and 1 sit inside the frame) fills the frame."""
+    lo, hi = p.get("range", [-0.35, 1.35])
+    s = PLANE_BOX / (hi - lo)
+    return PLANE_X0 + (u - lo) * s, PLANE_Y0 - (v - lo) * s
+
+
+def plane_steps(spec: dict) -> list:
+    """Each step of a plane figure: its `say` line and the parts it shows."""
+    return spec.get("flow", [])
+
+
+def plane_shape(k: int, x: float, y: float, size: float) -> str:
+    """A plane figure's mark for group `k` at (x, y): a circle, square, or triangle, about
+    `size` across its middle; -1, not yet in a group, is a small dot."""
+    if k < 0:
+        return f'<circle class="pl-none" cx="{fmt(x)}" cy="{fmt(y)}" r="{fmt(size * 0.55)}"/>'
+    kind = PLANE_SHAPES[k]
+    if kind == "circle":
+        return f'<circle cx="{fmt(x)}" cy="{fmt(y)}" r="{fmt(size)}"/>'
+    if kind == "square":
+        h = size * 0.88
+        return (
+            f'<rect x="{fmt(x - h)}" y="{fmt(y - h)}" width="{fmt(2 * h)}" height="{fmt(2 * h)}"/>'
+        )
+    r = size * 1.25  # a triangle, pointing up, about as heavy as the circle
+    pts = " ".join(
+        f"{fmt(x + r * math.cos(math.radians(a)))},{fmt(y - r * math.sin(math.radians(a)) + r * 0.2)}"
+        for a in (90, 210, 330)
+    )
+    return f'<polygon points="{pts}"/>'
+
+
+def plane_clip(poly: list, a: tuple, b: float) -> list:
+    """A convex polygon cut to the half-plane a . p <= b (Sutherland-Hodgman)."""
+    out = []
+    f = lambda p: a[0] * p[0] + a[1] * p[1] - b
+    for i, p in enumerate(poly):
+        q = poly[(i + 1) % len(poly)]
+        fp, fq = f(p), f(q)
+        if fp <= 0:
+            out.append(p)
+        if fp * fq < 0:
+            t = fp / (fp - fq)
+            out.append((p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])))
+    return out
+
+
+def plane_cells(centers: list, lo: float, hi: float) -> list:
+    """Each center's region of the frame: the points nearer it than any other (Voronoi)."""
+    cells = []
+    for k, (cx, cy) in enumerate(centers):
+        poly = [(lo, lo), (hi, lo), (hi, hi), (lo, hi)]
+        for j, (dx, dy) in enumerate(centers):
+            if j != k:
+                poly = plane_clip(
+                    poly, (2 * (dx - cx), 2 * (dy - cy)), dx * dx + dy * dy - cx * cx - cy * cy
+                )
+        cells.append(poly)
+    return cells
+
+
+def plane_carry(steps: list, key: str, rest):
+    """Each step's value of `key`, carried on from the step before when it isn't given (the
+    first given value before then); `rest` if no step gives one."""
+    given = [st[key] for st in steps if key in st]
+    cur, out = (given[0] if given else rest), []
+    for st in steps:
+        cur = st.get(key, cur)
+        out.append(cur)
+    return out
+
+
+def plane_arrow(x1: float, y1: float, x2: float, y2: float, cls: str, extra: str = "") -> str:
+    """An arrow from (x1, y1) to (x2, y2), its head a small filled triangle."""
+    dx, dy = x2 - x1, y2 - y1
+    n = math.hypot(dx, dy) or 1.0
+    ux, uy = dx / n, dy / n
+    bx, by = x2 - 6.0 * ux, y2 - 6.0 * uy
+    head = " ".join(
+        f"{fmt(a)},{fmt(b)}"
+        for a, b in ((x2, y2), (bx - 3.0 * uy, by + 3.0 * ux), (bx + 3.0 * uy, by - 3.0 * ux))
+    )
+    return (
+        f'<g class="{cls}"{extra}><line x1="{fmt(x1)}" y1="{fmt(y1)}" x2="{fmt(bx)}" '
+        f'y2="{fmt(by)}"/><polygon points="{head}"/></g>'
+    )
+
+
+def plane_figure(fid: str, spec: dict) -> str:
+    """A glossary figure drawn on the plane of two inputs rather than as a network (XOR,
+    cosine similarity, clustering). `points` are [u, v, value]: on or off (filled or hollow),
+    or the index of the group they end in (its shape). Each step (`flow`) can show:
+    a `line` that turns and shifts to each place listed ([center u, v, angle]), cases `wrong`
+    (ringed), a lasting `keep` line with a label, a `band` (corners) where the answer is on,
+    a `paint` (each point's group, -1 for none), the `centers` (larger shapes) moved to new
+    places, with `bounds: true` the lines between their territories,
+    the `arrow` turned to an angle, and a `note` (a readout in the corner). At rest the figure
+    shows how it ends: the points in their groups, the centers in place, the kept lines, the
+    band, and the arrow where it starts."""
+    p, steps = spec["plane"], plane_steps(spec)
+    n = len(steps)
+    lo, hi = p.get("range", [-0.35, 1.35])
+    (fx0, fy0), (fx1, fy1) = plane_xy(p, lo, lo), plane_xy(p, hi, hi)  # fy0 the bottom
+    clip = f"clip-{fid}"
+    on_from = lambda i: " ".join(str(k) for k in range(i, n))
+    parts = []
+    if p.get("cross"):  # the axes through the origin
+        ox, oy = plane_xy(p, 0, 0)
+        parts.append(
+            f'<path class="pl-cross" d="M{fmt(fx0)} {fmt(oy)}H{fmt(fx1)}M{fmt(ox)} {fmt(fy0)}'
+            f'V{fmt(fy1)}"/>'
+        )
+    for i, st in enumerate(steps):  # the band first, beneath the lines and points
+        if st.get("band"):
+            pts = " ".join(f"{fmt(x)},{fmt(y)}" for x, y in (plane_xy(p, *c) for c in st["band"]))
+            parts.append(f'<polygon class="pl-band" points="{pts}" data-on="{on_from(i)}"/>')
+    # the moving line (a perceptron's one line): drawn level through the middle, then turned
+    # and shifted to each place it is shown at; hidden at rest
+    moving = [(i, st["line"]) for i, st in enumerate(steps) if st.get("line")]
+    if moving:
+        mid = (lo + hi) / 2
+        cx, cy = plane_xy(p, mid, mid)
+        moves = []
+        for at in plane_carry(steps, "line", None):
+            x, y = plane_xy(p, at[0], at[1])
+            moves.append(f"translate({fmt(x - cx)}px, {fmt(y - cy)}px) rotate({fmt(at[2])}deg)")
+        half = PLANE_BOX
+        parts.append(
+            f'<g clip-path="url(#{clip})"><line class="pl-line" x1="{fmt(cx - half)}" y1="{fmt(cy)}" '
+            f'x2="{fmt(cx + half)}" y2="{fmt(cy)}" data-on="{" ".join(str(i) for i, _ in moving)}" '
+            f'data-gone="" data-move="{"|".join(moves)}" '
+            f'style="transform-origin: {fmt(cx)}px {fmt(cy)}px"/></g>'
+        )
+    for i, st in enumerate(steps):
+        k = st.get("keep")
+        if not k:
+            continue
+        (x1, y1), (x2, y2) = plane_xy(p, *k["from"]), plane_xy(p, *k["to"])
+        parts.append(
+            f'<g data-on="{on_from(i)}"><line class="pl-line" x1="{fmt(x1)}" y1="{fmt(y1)}" '
+            f'x2="{fmt(x2)}" y2="{fmt(y2)}" clip-path="url(#{clip})"/>'
+            + (
+                f'<text class="pl-label" x="{fmt(x2 + k.get("dx", 3))}" y="{fmt(y2 + k.get("dy", 3))}">'
+                f'{html.escape(k["label"])}</text>'
+                if k.get("label")
+                else ""
+            )
+            + "</g>"
+        )
+    ox, oy = plane_xy(p, 0, 0)
+    for vec in p.get("vectors", []):  # fixed arrows from the origin, shown throughout
+        x, y = plane_xy(p, *vec["to"])
+        parts.append(plane_arrow(ox, oy, x, y, "pl-vec"))
+        if vec.get("label"):
+            parts.append(
+                f'<text class="pl-label" x="{fmt(x + vec.get("dx", 4))}" '
+                f'y="{fmt(y + vec.get("dy", 0))}">{html.escape(vec["label"])}</text>'
+            )
+    arrow = p.get("arrow")  # an arrow from the origin that turns: drawn where it starts
+    if arrow:
+        a0, length = arrow["angle"], arrow["length"]
+        x, y = plane_xy(
+            p, length * math.cos(math.radians(a0)), length * math.sin(math.radians(a0))
+        )
+        first = next((i for i, st in enumerate(steps) if "arrow" in st), 0)
+        turns = "|".join(f"rotate({fmt(a0 - a)}deg)" for a in plane_carry(steps, "arrow", a0))
+        parts.append(
+            plane_arrow(
+                ox,
+                oy,
+                x,
+                y,
+                "pl-vec pl-turn",
+                f' data-on="{on_from(first)}" data-move="{turns}" '
+                f'style="transform-origin: {fmt(ox)}px {fmt(oy)}px"',
+            )
+        )
+    arc = p.get("arc")
+    if arc:  # at rest only: the angle between two directions, marked from the origin
+        r = arc.get("r", 0.3) * PLANE_BOX / (hi - lo)
+        a, b = math.radians(arc["from"]), math.radians(arc["to"])
+        sx, sy = ox + r * math.cos(a), oy - r * math.sin(a)
+        ex, ey = ox + r * math.cos(b), oy - r * math.sin(b)
+        mid = (a + b) / 2
+        parts.append(
+            f'<g class="p-rest"><path class="pl-arc" d="M{fmt(sx)} {fmt(sy)}A{fmt(r)} {fmt(r)} 0 0 0 '
+            f'{fmt(ex)} {fmt(ey)}"/><text class="pl-label" x="{fmt(ox + (r + 9) * math.cos(mid))}" '
+            f'y="{fmt(oy - (r + 9) * math.sin(mid) + 3)}" text-anchor="middle">'
+            f'{html.escape(arc.get("label", ""))}</text></g>'
+        )
+    if p.get("rest_note"):
+        parts.append(
+            f'<text class="pl-note p-rest" x="{fmt(fx0 + 6)}" y="{fmt(fy1 + 13)}">'
+            f'{html.escape(p["rest_note"])}</text>'
+        )
+    for i, st in enumerate(steps):
+        for c in st.get("wrong", []):
+            x, y = plane_xy(p, *c)
+            parts.append(
+                f'<circle class="pl-wrong tone-push" cx="{fmt(x)}" cy="{fmt(y)}" r="9" fill="none" '
+                f'stroke="{TONES["push"]}" stroke-width="1.5" data-on="{i}" data-gone=""/>'
+            )
+    paints = plane_carry(steps, "paint", None) if any("paint" in st for st in steps) else []
+    centers = p.get("centers", [])
+    if centers:
+        places = plane_carry(steps, "centers", centers)
+        finals = [v for (_, _, v) in p["points"]]
+
+        def by_key(keyf, draw, cls):
+            """One drawing per distinct state, shown at every step in it, and the final one
+            at rest (hidden while stepping)."""
+            seen = {}
+            for i in range(n):
+                seen.setdefault(keyf(i), []).append(i)
+            for key, idx in seen.items():
+                parts.append(
+                    f'<g class="{cls}" data-on="{" ".join(map(str, idx))}" data-gone="">'
+                    f"{draw(*key)}</g>"
+                )
+            parts.append(
+                f'<g class="{cls} p-rest">{draw(tuple(map(tuple, centers)), tuple(finals))}</g>'
+            )
+
+        def bounds_svg(cs, _held):
+            out, done = "", set()
+            on_frame = lambda a, b: any(
+                abs(a[i] - e) < 1e-6 and abs(b[i] - e) < 1e-6 for i in (0, 1) for e in (lo, hi)
+            )
+            for poly in plane_cells([list(c) for c in cs], lo, hi):
+                for a, b in zip(poly, poly[1:] + poly[:1]):
+                    key = tuple(
+                        sorted(
+                            [(round(a[0], 4), round(a[1], 4)), (round(b[0], 4), round(b[1], 4))]
+                        )
+                    )
+                    if on_frame(a, b) or key in done:
+                        continue
+                    done.add(key)
+                    (x1, y1), (x2, y2) = plane_xy(p, *a), plane_xy(p, *b)
+                    out += f'<line x1="{fmt(x1)}" y1="{fmt(y1)}" x2="{fmt(x2)}" y2="{fmt(y2)}"/>'
+            return out
+
+        if p.get("bounds"):  # where each center's territory meets the next (Voronoi)
+            by_key(lambda i: (tuple(map(tuple, places[i])), ()), bounds_svg, "pl-bounds")
+    for j, (u, v, val) in enumerate(p.get("points", [])):
+        x, y = plane_xy(p, u, v)
+        grouped = isinstance(val, int) and not isinstance(val, bool)
+        label = ""
+        if p.get("labels"):
+            tx, anchor = (x - 9, "end") if u < 0.5 else (x + 9, "start")
+            label = (
+                f'<text class="pl-label" x="{fmt(tx)}" y="{fmt(y + (13 if v < 0.5 else -7))}" '
+                f'text-anchor="{anchor}">{u:g}, {v:g}</text>'
+            )
+        if not grouped:  # on or off: filled or hollow
+            on = val in (1, True, "on")
+            parts.append(
+                f'<g class="pl-pt{" on" if on else ""}"><circle cx="{fmt(x)}" cy="{fmt(y)}" '
+                f'r="{p.get("r", 5)}"/>{label}</g>'
+            )
+            continue
+        # in a group: its shape, one drawn for each it takes (none yet: a small hollow dot), each
+        # shown at the steps it holds, and at rest the group it ends in
+        held = [ps[j] if ps else -1 for ps in paints] or [val] * len(steps)
+        for k in sorted(set(held) | {val}):
+            on = " ".join(str(i) for i, h in enumerate(held) if h == k)
+            rest = "" if k == val else ' data-gone=""'
+            parts.append(f'<g class="pl-grp" data-on="{on}"{rest}>{plane_shape(k, x, y, 4.2)}</g>')
+    if centers:  # each group's center: its shape, larger, with a cross
+        for k, (u, v) in enumerate(centers):
+            x, y = plane_xy(p, u, v)
+            moves = []
+            for pl in places:
+                px, py = plane_xy(p, *pl[k])
+                moves.append(f"translate({fmt(px - x)}px, {fmt(py - y)}px)")
+            parts.append(
+                f'<g class="pl-center" data-move="{"|".join(moves)}">{plane_shape(k, x, y, 8.0)}'
+                f'<path d="M{fmt(x - 2.5)} {fmt(y)}H{fmt(x + 2.5)}M{fmt(x)} {fmt(y - 2.5)}'
+                f'V{fmt(y + 2.5)}"/></g>'
+            )
+    for i, st in enumerate(steps):
+        if st.get("note"):
+            parts.append(
+                f'<text class="pl-note" x="{fmt(fx0 + 6)}" y="{fmt(fy1 + 13)}" data-on="{i}" '
+                f'data-gone="">{html.escape(st["note"])}</text>'
+            )
+    axes = ""
+    named = p.get("axes", ["Input 1", "Input 2"])
+    if named:
+        ax, ay = named
+        axes = (
+            f'<text class="pl-axis" x="{fmt((fx0 + fx1) / 2)}" y="{fmt(fy0 + 11)}" text-anchor="middle">'
+            f"{html.escape(ax)} →</text>"
+            f'<text class="pl-axis" x="0" y="0" text-anchor="middle" transform="translate('
+            f'{fmt(fx0 - 4)} {fmt((fy0 + fy1) / 2)}) rotate(-90)">{html.escape(ay)} →</text>'
+        )  # the second input's name reads up the left side, its letters reaching left of the line
+    x0 = fx0 - (14 if named else 4)
+    x1, y1, top = fx1 + p.get("right", 40 if named else 4), fy0 + (15 if named else 4), fy1 - 4
+    if named:
+        top = 0.0
+    say = json.dumps([prose_html(st["say"]) for st in steps], ensure_ascii=False)
+    return (
+        f'<figure class="p-fig p-plane" data-flow="" data-say="{html.escape(say)}">'
+        f'<svg style="width: {FIGURE_SCALE * (x1 - x0):.0f}px; max-width: 100%" '
+        f'viewBox="{fmt(x0)} {fmt(top)} {fmt(x1 - x0)} {fmt(y1 - top)}" role="img" '
+        f'aria-label="{html.escape(p.get("alt", ""))}" data-steps="{n}"{SEQ_ATTR}>'
+        f'<defs><clipPath id="{clip}"><rect x="{fmt(fx0)}" y="{fmt(fy1)}" '
+        f'width="{fmt(fx1 - fx0)}" height="{fmt(fy0 - fy1)}"/></clipPath></defs>'
+        f'<rect class="pl-frame" x="{fmt(fx0)}" y="{fmt(fy1)}" width="{fmt(fx1 - fx0)}" '
+        f'height="{fmt(fy0 - fy1)}"/>{axes}{"".join(parts)}</svg>'
+        '<div class="p-fig-ctl">'
+        + PRIMER_FLOW
+        + '<p class="p-say" aria-live="polite">Press Step through to watch it work.</p></div></figure>'
+    )
+
+
+CHART_W, CHART_H = 176.0, 108.0  # a chart figure's frame, in the drawing's units
+CHART_X0, CHART_Y0 = 12.0, 122.0  # its bottom left corner
+
+
+def chart_xy(c: dict, x: float, y: float) -> tuple:
+    """A point of a chart figure's axes (`x` and `y` ranges) in the drawing's units."""
+    (xl, xh), (yl, yh) = c["x"], c["y"]
+    return (
+        CHART_X0 + (x - xl) / (xh - xl) * CHART_W,
+        CHART_Y0 - (y - yl) / (yh - yl) * CHART_H,
+    )
+
+
+def bspline(values: list, x: float) -> float:
+    """A clamped uniform cubic B-spline through [0, 1], shaped by `values` (Cox-de Boor)."""
+    n, k = len(values), 3
+    inner = [i / (n - k) for i in range(1, n - k)]
+    t = [0.0] * (k + 1) + inner + [1.0] * (k + 1)
+    x = min(max(x, 0.0), 1.0 - 1e-9)
+
+    def basis(i, p):
+        if p == 0:
+            return 1.0 if t[i] <= x < t[i + 1] else 0.0
+        a = (x - t[i]) / (t[i + p] - t[i]) * basis(i, p - 1) if t[i + p] > t[i] else 0.0
+        b = (
+            (t[i + p + 1] - x) / (t[i + p + 1] - t[i + 1]) * basis(i + 1, p - 1)
+            if t[i + p + 1] > t[i + 1]
+            else 0.0
+        )
+        return a + b
+
+    return sum(v * basis(i, k) for i, v in enumerate(values))
+
+
+def bspline_knots(values: list) -> tuple:
+    """A clamped cubic B-spline's control points' x (Greville) and its pieces' joins."""
+    n, k = len(values), 3
+    t = [0.0] * (k + 1) + [i / (n - k) for i in range(1, n - k)] + [1.0] * (k + 1)
+    return [sum(t[i + 1 : i + k + 1]) / k for i in range(n)], [0.0] + t[k + 1 : n] + [1.0]
+
+
+def chart_fn(cv: dict):
+    """A chart curve's function, by name: relu, sigmoid, gauss (c, w), sine (a, f, p), or
+    bspline (values)."""
+    fn = cv["fn"]
+    if fn == "relu":
+        return lambda x: max(0.0, x)
+    if fn == "sigmoid":
+        return lambda x: 1 / (1 + math.exp(-x))
+    if fn == "gauss":
+        return lambda x: math.exp(-((x - cv.get("c", 0.0)) ** 2) / (2 * cv.get("w", 1.0) ** 2))
+    if fn == "sine":
+        return lambda x: cv.get("a", 1.0) * math.sin(
+            2 * math.pi * (cv.get("f", 1.0) * x + cv.get("p", 0.0))
+        ) + cv.get("b", 0.0)
+    if fn == "bspline":
+        return lambda x: bspline(cv["values"], x)
+    raise ValueError(f"chart curve: no function '{fn}'")
+
+
+def chart_samples(c: dict, cv: dict, a: float | None = None, b: float | None = None) -> list:
+    """A curve's points, closely spaced, in the drawing's units, from x = a to b."""
+    f = chart_fn(cv)
+    lo, hi = cv.get("domain", c["x"])  # a spline is drawn only over [0, 1]
+    a = lo if a is None else a
+    b = hi if b is None else b
+    n = max(2, int(abs(b - a) / (c["x"][1] - c["x"][0]) * 240))
+    return [chart_xy(c, a + (b - a) * i / n, f(a + (b - a) * i / n)) for i in range(n + 1)]
+
+
+def chart_shows(st_list: list, item: dict, n: int) -> str:
+    """The steps a chart part shows at: `steps` if listed, else from `from` (0) on."""
+    if "steps" in item:
+        return " ".join(map(str, item["steps"]))
+    return " ".join(str(k) for k in range(item.get("from", 0), n))
+
+
+def chart_figure(fid: str, spec: dict) -> str:
+    """A glossary figure drawn as a chart rather than a network (ReLU, a Gaussian bump, a
+    spline, quantization): `curves` (a named function each, shown at `steps` or `from` a step
+    on, at rest unless `rest: false`; a spline's `pieces: true` shades its pieces in turn),
+    a `dot` that runs along a curve to each step's x, spline `controls` (squares at each
+    step's values), `samples` of a curve that `snap` to `levels`, with the `stair` they make,
+    and a `note` per step."""
+    c, steps = spec["chart"], spec.get("flow", [])
+    n = len(steps)
+    fx0, fy0 = chart_xy(c, c["x"][0], c["y"][0])
+    fx1, fy1 = chart_xy(c, c["x"][1], c["y"][1])
+    parts = []
+    gone = lambda item: "" if item.get("rest", True) else ' data-gone=""'
+    if c.get("zero", True):  # the axes' zero lines, where they fall inside the frame
+        zx, zy = chart_xy(c, 0, 0)
+        d = ""
+        if c["y"][0] < 0 < c["y"][1]:
+            d += f"M{fmt(fx0)} {fmt(zy)}H{fmt(fx1)}"
+        if c["x"][0] < 0 < c["x"][1]:
+            d += f"M{fmt(zx)} {fmt(fy0)}V{fmt(fy1)}"
+        if d:
+            parts.append(f'<path class="pl-cross" d="{d}"/>')
+    lv = c.get("levels")
+    if lv:  # evenly spaced allowed values, from the bottom of the range to the top
+        lo, hi = lv.get("range", c["y"])
+        vals = [lo + (hi - lo) * (i + 0.5) / lv["n"] for i in range(lv["n"])]
+        d = "".join(f"M{fmt(fx0)} {fmt(chart_xy(c, 0, v)[1])}H{fmt(fx1)}" for v in vals)
+        parts.append(
+            f'<path class="cv-levels" d="{d}" data-on="{chart_shows(steps, lv, n)}"{gone(lv)}/>'
+        )
+    for cv in c.get("curves", []):
+        on = chart_shows(steps, cv, n)
+        cls = (
+            "cv-curve"
+            + (f" cv-{cv['hue']}" if cv.get("hue") else "")
+            + (" cv-faint" if cv.get("faint") else "")
+        )
+        if cv.get("pieces") and cv["fn"] == "bspline":
+            _, joins = bspline_knots(cv["values"])
+            paths = []
+            for j in range(len(joins) - 1):
+                pts = chart_samples(c, cv, joins[j], joins[j + 1])
+                paths.append(
+                    f'<path class="{cls}{" cv-alt" if j % 2 else ""}" '
+                    f'd="M{" L".join(f"{fmt(x)} {fmt(y)}" for x, y in pts)}"/>'
+                )
+            parts.append(f'<g data-on="{on}"{gone(cv)}>{"".join(paths)}</g>')
+            continue
+        pts = chart_samples(c, cv)
+        parts.append(
+            f'<path class="{cls}" d="M{" L".join(f"{fmt(x)} {fmt(y)}" for x, y in pts)}" '
+            f'data-on="{on}"{gone(cv)}/>'
+        )
+    sm = c.get("samples")
+    if sm:  # points sampled from a curve, which can snap to the nearest level
+        cv = c["curves"][sm.get("curve", 0)]
+        f = chart_fn(cv)
+        lo, hi = lv.get("range", c["y"]) if lv else c["y"]
+        step = (hi - lo) / lv["n"] if lv else 1.0
+        snap_at = [bool(st.get("snap")) for st in steps]
+        xs = [c["x"][0] + (c["x"][1] - c["x"][0]) * (i + 0.5) / sm["n"] for i in range(sm["n"])]
+        snapped = []
+        for x in xs:
+            y = f(x)
+            q = (
+                lo + step * (min(lv["n"] - 1, max(0, math.floor((y - lo) / step))) + 0.5)
+                if lv
+                else y
+            )
+            snapped.append(q)
+            px, py = chart_xy(c, x, y)
+            qy = chart_xy(c, x, q)[1]
+            moves = "|".join(f"translate(0px, {fmt(qy - py) if s else 0}px)" for s in snap_at)
+            parts.append(
+                f'<circle class="cv-sample" cx="{fmt(px)}" cy="{fmt(py)}" r="2.6" '
+                f'data-on="{chart_shows(steps, sm, n)}" data-move="{moves}" '
+                f'style="transform: translate(0px, {fmt(qy - py)}px)"/>'
+            )
+        st_ = c.get("stair")
+        if st_ is not None and lv:
+            w = (c["x"][1] - c["x"][0]) / sm["n"]
+            d = ""
+            for i, (x, q) in enumerate(zip(xs, snapped)):
+                a, ya = chart_xy(c, x - w / 2, q)
+                b, _ = chart_xy(c, x + w / 2, q)
+                d += (f"M{fmt(a)} {fmt(ya)}" if i == 0 else f"V{fmt(ya)}") + f"H{fmt(b)}"
+            parts.append(
+                f'<path class="cv-stair" d="{d}" data-on="{chart_shows(steps, st_, n)}"/>'
+            )
+    ctl = c.get("controls")
+    if ctl:  # a spline's values, as squares at their places along it
+        rest = ctl["values"]
+        xs, _ = bspline_knots(rest)
+        places = []
+        cur = rest
+        for st in steps:
+            cur = st.get("controls", cur)
+            places.append(cur)
+        for k, (x, v) in enumerate(zip(xs, rest)):
+            px, py = chart_xy(c, x, v)
+            moves = "|".join(
+                f"translate(0px, {fmt(chart_xy(c, x, pl[k])[1] - py)}px)" for pl in places
+            )
+            parts.append(
+                f'<rect class="cv-ctl" x="{fmt(px - 3.5)}" y="{fmt(py - 3.5)}" width="7" height="7" '
+                f'rx="1" data-on="{chart_shows(steps, ctl, n)}" data-move="{moves}"/>'
+            )
+    dot = c.get("dot")
+    if dot:  # runs along its curve to each step's x, with dashed guides to both axes
+        cv = c["curves"][dot.get("curve", 0)]
+        pts = chart_samples(c, cv)
+        xs = [st.get("dot") for st in steps]
+        given = [x for x in xs if x is not None]
+        cur, at = (given[0] if given else c["x"][0]), []
+        lo, hi = cv.get("domain", c["x"])
+        for x in xs:
+            cur = x if x is not None else cur
+            at.append(round((cur - lo) / (hi - lo) * (len(pts) - 1)))
+        track = " ".join(f"{fmt(x)},{fmt(y)}" for x, y in pts)
+        first = next((i for i, x in enumerate(xs) if x is not None), 0)
+        shown = dot.get("steps", range(first, n))  # the steps it shows at, `steps` if given
+        # the input it reads, a yellow mark where its guide meets the bottom, and the output
+        # it gives, a red dot on the curve, as the panels color an input and an output
+        parts.append(
+            f'<g class="cv-dot" data-on="{" ".join(map(str, shown))}" data-gone="" '
+            f'data-track="{track}" data-at="{"|".join(map(str, at))}" '
+            f'data-axes="{fmt(fx0)},{fmt(fy0)}"><line class="cv-guide"/><line class="cv-guide"/>'
+            f'<circle class="cv-foot" r="2.8"/><circle class="cv-out" r="3.6"/></g>'
+        )
+    # each step's readout: top left unless `note_at` puts it elsewhere (clear of the guides)
+    nx, ny, anchor = fx0 + 6, fy1 + 13, "start"
+    if c.get("note_at"):
+        nx, ny = chart_xy(c, *c["note_at"])
+        anchor = "end" if nx > (fx0 + fx1) / 2 else "start"
+    for i, st in enumerate(steps):
+        if st.get("note"):
+            parts.append(
+                f'<text class="pl-note" x="{fmt(nx)}" y="{fmt(ny)}" text-anchor="{anchor}" '
+                f'data-on="{i}" data-gone="">{html.escape(st["note"])}</text>'
+            )
+    ax, ay = c.get("axes", ["Input", "Output"])
+    axes = (
+        f'<text class="pl-axis" x="{fmt((fx0 + fx1) / 2)}" y="{fmt(fy0 + 11)}" text-anchor="middle">'
+        f"{html.escape(ax)} →</text>"
+        f'<text class="pl-axis" x="0" y="0" text-anchor="middle" transform="translate('
+        f'{fmt(fx0 - 4)} {fmt((fy0 + fy1) / 2)}) rotate(-90)">{html.escape(ay)} →</text>'
+    )
+    x0, x1, y0, y1 = fx0 - 14, fx1 + c.get("right", 6), fy1 - 6, fy0 + 15
+    say = json.dumps([prose_html(st["say"]) for st in steps], ensure_ascii=False)
+    return (
+        f'<figure class="p-fig p-plane p-chart" data-flow="" data-say="{html.escape(say)}">'
+        f'<svg style="width: {FIGURE_SCALE * (x1 - x0):.0f}px; max-width: 100%" '
+        f'viewBox="{fmt(x0)} {fmt(y0)} {fmt(x1 - x0)} {fmt(y1 - y0)}" role="img" '
+        f'aria-label="{html.escape(c.get("alt", ""))}" data-steps="{n}"{SEQ_ATTR}>'
+        f'<rect class="pl-frame" x="{fmt(fx0)}" y="{fmt(fy1)}" width="{fmt(fx1 - fx0)}" '
+        f'height="{fmt(fy0 - fy1)}"/>{axes}{"".join(parts)}</svg>'
+        '<div class="p-fig-ctl">'
+        + PRIMER_FLOW
+        + '<p class="p-say" aria-live="polite">Press Step through to watch it work.</p></div></figure>'
+    )
+
+
+BARS_W = 30.0  # a bar chart figure's bar width, and the gap between bars is a third of it
+
+
+def bars_figure(fid: str, spec: dict) -> str:
+    """A glossary figure drawn as bars (softmax): each step sets every bar's `values` and the
+    `scale` that turns them into heights (drawing units per unit), labels each bar with its
+    value, and the bars grow or shrink to it. At rest it shows the last step."""
+    b, steps = spec["bars"], spec.get("flow", [])
+    n, names = len(steps), b["names"]
+    gap = BARS_W / 3
+    zero, top, bottom = b.get("zero", 112.0), 14.0, 136.0
+    x_left, parts = 22.0, []
+    inputs = b.get("inputs")
+    if inputs:  # the first step's values as a small chart at the left, an arrow on to the bars
+        mw, mg, ms = 10.0, 4.0, inputs.get("scale", 15.0)
+        first = steps[0]["values"]
+        for k, v in enumerate(first):
+            x, h = x_left + k * (mw + mg), v * ms
+            y0, y1 = (zero - h, zero) if h >= 0 else (zero, zero - h)
+            parts.append(
+                f'<rect class="cv-bar cv-in" x="{fmt(x)}" y="{fmt(y0)}" width="{fmt(mw)}" '
+                f'height="{fmt(y1 - y0)}"/><text class="cv-val" x="{fmt(x + mw / 2)}" '
+                f'y="{fmt(zero - h - 3 if h >= 0 else zero - h + 8)}" text-anchor="middle">'
+                f"{v:g}</text>".replace(">-", ">−")
+            )
+        right = x_left + len(first) * (mw + mg) - mg
+        parts.append(
+            f'<path class="pl-cross" d="M{fmt(x_left - 4)} {fmt(zero)}H{fmt(right + 4)}"/>'
+            f'<text class="pl-axis" x="{fmt((x_left + right) / 2)}" y="{fmt(bottom + 13)}" '
+            f'text-anchor="middle">{html.escape(inputs.get("label", "Scores"))}</text>'
+        )
+        ax0, ax1, ay = right + 8, right + 50, zero - 34
+        parts.append(
+            f'<line class="cv-arrow" x1="{fmt(ax0)}" y1="{fmt(ay)}" x2="{fmt(ax1)}" y2="{fmt(ay)}" '
+            f'stroke="currentColor" stroke-width="0.9" marker-end="url(#arr-{fid})"/>'
+            f'<text class="pl-label" x="{fmt((ax0 + ax1) / 2)}" y="{fmt(ay - 5)}" '
+            f'text-anchor="middle">{html.escape(inputs.get("arrow", ""))}</text>'
+        )
+        x_left = ax1 + 14
+    parts += [
+        f'<path class="pl-cross" d="M{fmt(x_left - 6)} {fmt(zero)}H{fmt(x_left + len(names) * (BARS_W + gap) - gap + 6)}"/>'
+    ]
+    vals = [st.get("values") for st in steps]
+    scales = [st.get("scale", 1.0) for st in steps]
+    cur, hs = vals[0], []
+    for v, s in zip(vals, scales):
+        cur = v or cur
+        hs.append([x * s for x in cur])
+    for k, name in enumerate(names):
+        x = x_left + k * (BARS_W + gap)
+        moves = "|".join(f"scale(1, {h[k]:.3f})" for h in hs)
+        parts.append(
+            f'<rect class="cv-bar" x="{fmt(x)}" y="{fmt(zero - 1)}" width="{fmt(BARS_W)}" height="1" '
+            f'data-move="{moves}" style="transform-origin: {fmt(x)}px {fmt(zero)}px; '
+            f'transform: scale(1, {hs[-1][k]:.3f})"/>'
+            f'<text class="pl-axis" x="{fmt(x + BARS_W / 2)}" y="{fmt(bottom + 13)}" '
+            f'text-anchor="middle">{html.escape(name)}</text>'
+        )
+        for i, h in enumerate(hs):
+            v = (vals[i] or [])[k] if vals[i] else None
+            if v is None:
+                continue
+            y = (
+                zero - h[k] - 3 if h[k] >= 0 else zero - h[k] + 9
+            )  # above a bar, or below one that hangs
+            hide = "" if i == n - 1 else ' data-gone=""'  # only the last step's values at rest
+            parts.append(
+                f'<text class="cv-val" x="{fmt(x + BARS_W / 2)}" y="{fmt(y)}" text-anchor="middle" '
+                f'data-on="{i}"{hide}>'
+                f'{b.get("format", "{:.2f}").format(v).replace("-", "−")}</text>'
+            )
+    x1 = x_left + len(names) * (BARS_W + gap) - gap + 12
+    say = json.dumps([prose_html(st["say"]) for st in steps], ensure_ascii=False)
+    return (
+        f'<figure class="p-fig p-plane p-chart" data-flow="" data-say="{html.escape(say)}">'
+        f'<svg style="width: {FIGURE_SCALE * (x1 - 10):.0f}px; max-width: 100%" '
+        f'viewBox="10 {fmt(top - 6)} {fmt(x1 - 10)} {fmt(bottom + 18 - top + 6)}" role="img" '
+        f'aria-label="{html.escape(b.get("alt", ""))}" data-steps="{n}"{SEQ_ATTR}>'
+        f'<defs>{marker_def(f"arr-{fid}", "currentColor")}</defs>{"".join(parts)}</svg>'
+        '<div class="p-fig-ctl">'
+        + PRIMER_FLOW
+        + '<p class="p-say" aria-live="polite">Press Step through to watch it work.</p></div></figure>'
+    )
 
 
 NAV_MORE = (  # in a dialog's bottom bar while more lies below: says so (the scroll bar may be hidden)
@@ -1545,9 +2385,288 @@ NAV_MORE = (  # in a dialog's bottom bar while more lies below: says so (the scr
 )
 
 
+GLOSSARY_ICON = (  # an open book
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.3 5.3 7.6 4.8 4.5 5v12.5'
+    'c3.1-.2 5.8.3 7.5 1.5 1.7-1.2 4.4-1.7 7.5-1.5V5c-3.1-.2-5.8.3-7.5 1.5zM12 6.5V19"/></svg>'
+)
+
+
+def glossary_button(doc: dict) -> str:
+    if not doc.get("glossary"):
+        return ""
+    return (
+        '<button class="icon-btn" type="button" id="gloss-btn" aria-label="Glossary" '
+        f'title="Glossary" aria-haspopup="dialog">{GLOSSARY_ICON}</button>'
+    )
+
+
+def glossary_slug(term: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", term.lower()).strip("-")
+
+
+# the glossary's groups, in the order its index and entries show them
+GLOSSARY_GROUPS = OrderedDict(
+    [
+        ("basics", "Basics"),
+        ("operations", "Operations"),
+        ("objectives", "Objectives"),
+        ("training", "Training"),
+        ("rl", "Reinforcement learning"),
+        ("models", "Model families"),
+        ("tasks", "Tasks and data"),
+        ("scale", "Scale"),
+    ]
+)
+
+
+def glossary_entries(doc: dict) -> list:
+    """The glossary's entries by group, then alphabetically."""
+    order = list(GLOSSARY_GROUPS)
+    return sorted(
+        doc.get("glossary", []),
+        key=lambda e: (
+            order.index(e["group"]) if e.get("group") in order else len(order),
+            e["term"].lower(),
+        ),
+    )
+
+
+def glossary_split(e: dict) -> tuple:
+    """An entry's text as its first sentence (the lead, and a linked term's tooltip) and the
+    rest."""
+    parts = re.split(r"(?<=[.!?])\s", " ".join(str(e["text"]).split()), maxsplit=1)
+    return parts[0], parts[1] if len(parts) > 1 else ""
+
+
+def glossary_hint(e: dict) -> str:
+    """An entry's first sentence, as plain text: the tooltip on a term linked from a panel."""
+    return glossary_split(e)[0].replace("`", "")
+
+
+def glossary_used(doc: dict, e: dict) -> list:
+    """The panels an entry names: its list, or for an objective's entry, the panels trained
+    with that objective."""
+    arch = doc["architectures"]
+    if "used_in" in e:
+        return [p for p in e["used_in"] if p in arch]
+    if e.get("objective"):
+        return [
+            p
+            for p, a in arch.items()
+            if a.get("objective") == e["objective"]
+            or e["objective"] in (a.get("also_objectives") or [])
+        ]
+    return []
+
+
+def glossary_html(doc: dict, diagrams: dict) -> str:
+    """The glossary: a dialog the page's glossary button opens. Its index of terms by group,
+    then each term: its first sentence as a lead, a drawing that steps through how it works
+    (some), the panels that use it, and the work it comes from."""
+    diagrams = {**diagrams, **figure_diagrams(doc)}
+    arch = doc["architectures"]
+    entries = glossary_entries(doc)
+    out = []
+    for g, name in GLOSSARY_GROUPS.items():
+        terms = [e for e in entries if e.get("group") == g]
+        if terms:
+            out.append(
+                f'<div class="g-group"><p class="g-gname">{name}</p><p class="g-index">'
+                + "".join(
+                    f'<a href="#glossary-{glossary_slug(e["term"])}">{html.escape(e["term"])}</a>'
+                    for e in terms
+                )
+                + "</p></div>"
+            )
+    group = None
+    for e in entries:
+        if e.get("group") != group:
+            group = e.get("group")
+            out.append(f'<p class="g-sec">{GLOSSARY_GROUPS.get(group, "")}</p>')
+        out.append(
+            f'<h3 id="glossary-{glossary_slug(e["term"])}" tabindex="-1">'
+            f'{html.escape(e["term"])}</h3>'
+        )
+        lead, rest = glossary_split(e)
+        out.append(f'<p class="g-lead">{prose_html(lead)}</p>')
+        if e.get("figure"):
+            spec = doc.get("figures", {}).get(e["figure"], {})
+            out.append(
+                plane_figure(e["figure"], spec)
+                if "plane" in spec
+                else (
+                    chart_figure(e["figure"], spec)
+                    if "chart" in spec
+                    else (
+                        bars_figure(e["figure"], spec)
+                        if "bars" in spec
+                        else primer_figure(
+                            diagrams[e["figure"]], e.get("labels", []), 0, True, e.get("tips")
+                        )
+                    )
+                )
+            )
+        if rest:
+            out.append(f"<p>{prose_html(rest)}</p>")
+        used = glossary_used(doc, e)
+        if e.get("used_in_text"):
+            out.append(
+                f'<p class="g-used"><span class="k">Used in:</span> '
+                f'{prose_html(e["used_in_text"])}</p>'
+            )
+        elif used:
+            out.append(
+                '<p class="g-used"><span class="k">Used in:</span> '
+                + ", ".join(
+                    f'<button type="button" data-open="{p}">'
+                    f'{html.escape(arch[p]["name"])}</button>'
+                    for p in used
+                )
+                + "</p>"
+            )
+        if e.get("sources"):
+            out.append(
+                f'<p class="g-used g-src"><span class="k">Source:</span> '
+                f'{"; ".join(glossary_source(doc, e, c) for c in e["sources"])}</p>'
+            )
+    return (
+        '<dialog id="glossary" aria-labelledby="g-title"><div class="p-wrap">'
+        '<h2 id="g-title" tabindex="-1">Glossary</h2>'
+        f'{"".join(out)}</div><div class="p-nav">{NAV_MORE}<button class="btn" type="button" '
+        'id="g-close">Close</button></div></dialog>'
+    )
+
+
+def cited_in(doc: dict, cite: str) -> list:
+    """The panels whose papers include this cite, in the order the YAML lists them."""
+    return [
+        pid
+        for pid, a in doc["architectures"].items()
+        if any(p["cite"] == cite for p in a.get("papers", []))
+    ]
+
+
+def glossary_source(doc: dict, e: dict, c) -> str:
+    """One of an entry's sources: a cite that a panel lists opens that panel (the one the entry
+    uses, if several list it), where the paper is given in full; any other links to the work."""
+    arch = doc["architectures"]
+    if isinstance(c, str):
+        panels = cited_in(doc, c)
+        used = glossary_used(doc, e)
+        pid = next((p for p in panels if p in used), panels[0] if panels else "")
+        if not pid:
+            return html.escape(c)
+        title = next(p["title"] for p in arch[pid]["papers"] if p["cite"] == c)
+        tip = f'{title}. In the {arch[pid]["name"]} panel\'s papers.'
+        return (
+            f'<button type="button" data-open="{pid}" title="{html.escape(tip)}">'
+            f"{html.escape(c)}</button>"
+        )
+    return (
+        f'<a href="{html.escape(c["url"])}" target="_blank" rel="noopener" '
+        f'title="{html.escape(c["title"])}">{html.escape(c["cite"])}</a>'
+    )
+
+
+def has_keys(a: dict) -> list:
+    """The key entries (data-k) a panel's network has but doesn't draw: its `contains`."""
+    return [("link:" if k in LINKS else "cell:") + k for k in a.get("contains", [])]
+
+
+def has_attr(a: dict) -> str:
+    keys = has_keys(a)
+    return f' data-has="{" ".join(keys)}"' if keys else ""
+
+
+def has_text(a: dict) -> str:
+    """The line under a panel's key naming what its network has but the panel doesn't draw."""
+    names = [
+        (LINKS[k]["label"] if k in LINKS else CELLS[k]["label"]).lower() + "s"
+        for k in a.get("contains", [])
+    ]
+    return ("Also has, not drawn: " + ", ".join(names) + ".") if names else ""
+
+
+def objective_gloss(doc: dict, objective: str) -> str:
+    """The glossary entry (its anchor) that defines an objective tag, if any."""
+    for e in doc.get("glossary", []):
+        if e.get("objective") == objective:
+            return glossary_slug(e["term"])
+    return ""
+
+
+LINK_OPEN = '<button type="button" class="g-link"'  # a glossary term linked from a panel
+
+
+def link_terms(doc: dict, parts: list, pid: str = "") -> list:
+    """Panel prose (HTML) with the first use of each glossary term made a link to its entry:
+    its earliest use, in any of its forms, once per panel across all its parts, and never inside
+    a tag or a link already made. An entry with `link_in` links only in those panels (and in the
+    primer if it lists `primer`): `node`, which means something else in a seq2seq's drawing."""
+    entries = [
+        e
+        for e in doc.get("glossary", [])
+        if e.get("link", True) and (not e.get("link_in") or (pid or "primer") in e["link_in"])
+    ]
+    # entries with longer forms first, so "dense layer" is taken before "layer" can be
+    entries.sort(key=lambda e: -max(len(f) for f in e.get("match", [e["term"]])))
+    for e in entries:
+        forms = sorted(e.get("match", [e["term"]]), key=len, reverse=True)
+        pat = re.compile(
+            r"(?<![\w-])(?:" + "|".join(re.escape(f) for f in forms) + r")(?![\w-])",
+            re.IGNORECASE,
+        )
+        slug, hint = glossary_slug(e["term"]), glossary_hint(e)
+        for i, text in enumerate(parts):
+            bits = re.split(r"(<[^>]+>)", text)
+            depth, hit = 0, False
+            for j, b in enumerate(bits):
+                if b.startswith("<"):
+                    if b.startswith("<button") or b.startswith("<i"):
+                        depth += 1
+                    elif b.startswith("</button") or b.startswith("</i"):
+                        depth -= 1
+                    continue
+                if depth:
+                    continue
+                # never right beside another term's link, where the two would read as one
+                prev_link = j > 0 and bits[j - 1].startswith("</button")
+                next_link = j + 1 < len(bits) and bits[j + 1].startswith(LINK_OPEN)
+                m = next(
+                    (
+                        m
+                        for m in pat.finditer(b)
+                        if not (prev_link and not b[: m.start()].strip())
+                        and not (next_link and not b[m.end() :].strip())
+                    ),
+                    None,
+                )
+                if m:
+                    bits[j] = (
+                        b[: m.start()] + f'{LINK_OPEN} data-g="{slug}" '
+                        f'title="{html.escape(hint)}">{m.group(0)}</button>' + b[m.end() :]
+                    )
+                    hit = True
+                    break
+            if hit:
+                parts[i] = "".join(bits)
+                break
+    return parts
+
+
 def primer_html(doc: dict, diagrams: dict) -> str:
     """The primer for readers new to neural networks: a dialog the page's "?" button opens."""
     diagrams = {**diagrams, **figure_diagrams(doc)}
+    # glossary terms link to their entries, the first use of each in the whole primer
+    paras = [
+        [prose_html(t) for t in sec["text"].strip().split("\n") if t.strip()]
+        for sec in doc.get("primer", [])
+    ]
+    flat = link_terms(doc, [t for ps in paras for t in ps])
+    linked, i = [], 0
+    for ps in paras:
+        linked.append(flat[i : i + len(ps)])
+        i += len(ps)
     sections = "".join(
         (
             f'<h3 id="primer-{html.escape(sec["anchor"])}" tabindex="-1">'
@@ -1566,9 +2685,9 @@ def primer_html(doc: dict, diagrams: dict) -> str:
             if sec.get("figure")
             else ""
         )
-        + "".join(f"<p>{prose_html(t)}</p>" for t in sec["text"].strip().split("\n") if t.strip())
+        + "".join(f"<p>{t}</p>" for t in ps)
         + primer_key(sec.get("key", []), sec.get("groups"))
-        for sec in doc.get("primer", [])
+        for sec, ps in zip(doc.get("primer", []), linked)
     )
     return (
         '<dialog id="primer" aria-labelledby="p-title"><div class="p-wrap">'
@@ -1641,7 +2760,10 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
         ("title", "display", TYPE["title"][0], 500),
         ("subtitle", "body", TYPE["subtitle"][0], 400),
     ):
-        if text_width(str(doc.get(key, "")), role, size, weight) > text_col:
+        text = (
+            doc.get("poster_subtitle", doc.get(key, "")) if key == "subtitle" else doc.get(key, "")
+        )
+        if text_width(str(text), role, size, weight) > text_col:
             warns.append(f"poster: the {key} is too wide for one line")
     placed = [p for s in doc["sections"] for p in s["panels"]]
     for p in placed:
@@ -1769,6 +2891,60 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
     for l in LINKS.values():
         if LEGEND_LINK_X + text_width(l["label"], "body", TYPE["legend"][0]) > W - 2:
             warns.append(f"legend: '{l['label']}' is too wide for its column")
+    figs = figure_diagrams(doc)
+    for e in doc.get("glossary", []):
+        t = e.get("term", "?")
+        if e.get("group") not in GLOSSARY_GROUPS:
+            warns.append(f"glossary '{t}': group must be one of {', '.join(GLOSSARY_GROUPS)}")
+        if not e.get("sources"):
+            warns.append(f"glossary '{t}': name its `sources`")
+        for c in e.get("sources", []):
+            if isinstance(c, str) and not cited_in(doc, c):
+                warns.append(f"glossary '{t}': no panel cites '{c}'; give its title and url")
+            elif isinstance(c, dict) and not (c.get("cite") and c.get("title") and c.get("url")):
+                warns.append(f"glossary '{t}': a source needs its cite, title, and url")
+        if e.get("objective") and e["objective"] not in OBJECTIVES:
+            warns.append(f"glossary '{t}': '{e['objective']}' is not an objective")
+    slugs = Counter(glossary_slug(e.get("term", "")) for e in doc.get("glossary", []))
+    for e in doc.get("glossary", []):
+        t = e.get("term", "?")
+        if slugs[glossary_slug(t)] > 1:
+            warns.append(f"glossary: '{t}' is listed twice")
+        for p in e.get("link_in", []):
+            if p not in arch and p != "primer":
+                warns.append(f"glossary '{t}': link_in '{p}' is not an architecture")
+        for p in e.get("used_in", []):
+            if p not in arch:
+                warns.append(f"glossary '{t}': used_in '{p}' is not an architecture")
+        f = e.get("figure")
+        plane = doc.get("figures", {}).get(f, {}) if f else {}
+        if {"plane", "chart", "bars"} & set(plane):
+            if any(not st.get("say") for st in plane_steps(plane)):
+                warns.append(f"glossary '{t}': give each step of '{f}' a `say` line")
+            f = None  # drawn on a plane: the checks below are for networks
+        if f and f not in figs:
+            warns.append(f"glossary '{t}': no figure '{f}'")
+        elif f and len(figs[f].say) != len(figs[f].seq):
+            warns.append(f"glossary '{t}': give each step of '{f}' a `say` line")
+        if f and figs[f].slide and len(figs[f].slide[2]) != len(figs[f].seq):
+            warns.append(f"glossary '{t}': give '{f}' a slide offset for each step")
+        if f and any(s.tone and s.tone not in TONES for s in figs[f].segs):
+            warns.append(f"glossary '{t}': a link's tone must be one of {', '.join(TONES)}")
+        if f and len(e.get("labels", [])) != len({round(c.y, 1) for c in figs[f].cells.values()}):
+            warns.append(f"glossary '{t}': give each row of '{f}' a label")
+    for pid, a in arch.items():
+        for k in a.get("contains", []):
+            if k not in LINKS and k not in CELLS:
+                warns.append(f"{pid}: contains '{k}', not a key entry")
+            elif pid in diagrams and any(
+                (s.style == k or LINKS.get(s.style, {}).get("legend_as") == k)
+                for s in diagrams[pid].segs
+            ):
+                warns.append(f"{pid}: contains '{k}', which its panel already draws")
+    placed_all = {p for sec in doc["sections"] for p in sec["panels"]}
+    for p in POSTER_PANELS:
+        if p not in placed_all:
+            warns.append(f"poster: '{p}' is not in any section")
     for p in PREVIEW_PANELS:
         if p not in arch:
             warns.append(f"preview: '{p}' is not an architecture")
@@ -1960,6 +3136,25 @@ def cell_svg(
 STYLE_ORDER = ["frozen", "link", "skip", "func", "cross", "gate", "state", "loop"]
 
 
+def unfocused(d: Diagram, s: "Seg | None" = None, cell: str = "") -> bool:
+    """Whether a part lies outside a glossary figure's focus, so it is faded at rest."""
+    fo = d.focus
+    if not fo:
+        return False
+    if s is None:
+        return cell not in fo["cells"]
+    if not fo.get("lines", True):
+        return True
+    if s.style in fo["styles"]:
+        return False
+    ends = list(s.ends) or ([s.dst] if s.dst else [])
+    if ends and all(k in fo["cells"] for k in ends):
+        return False
+    if fo["into"] and len(s.ends) == 2 and s.ends[1] in fo["cells"]:
+        return False
+    return True
+
+
 def render_diagram(
     d: Diagram,
     marker_id: str,
@@ -2016,6 +3211,12 @@ def render_diagram(
             )
             mk = f' marker-end="url(#{marker_id})"' if s.arrow else ""
             op += at(seg_step(s), s.ends) + both(s) + (' data-late=""' if tags and s.late else "")
+            if s.tone:
+                op += f' class="tone-{s.tone}" stroke="{TONES[s.tone]}"'
+            if tags and unfocused(d, s):
+                op += ' data-dim=""'
+            if tags and d.slide and set(s.ends) & d.slide[0]:
+                op += ' data-slide=""'
             if tags and s.t1 is not None:
                 op += f' data-t0="{s.t0:.3f}" data-t1="{s.t1:.3f}"'
             if weights is not None and tuple(s.ends) in weights:
@@ -2034,9 +3235,10 @@ def render_diagram(
         out.append(f'<g{tag("link:" + st.get("legend_as", style))} {attrs}>{"".join(items)}</g>')
     dot_arrive = ' data-arrive="0.5"' if tags else ""  # a gate's dot, halfway along its arrow
     if d.dots:
+        dim = ' data-dim=""' if tags and d.focus and "gate" not in d.focus["styles"] else ""
         dots = "".join(
             f'<circle cx="{fmt(x)}" cy="{fmt(y)}" r="{fmt(DOT)}"{at(d.steps.get(k, 0))}'
-            f"{dot_arrive}/>"
+            f"{dot_arrive}{dim}/>"
             for (x, y, _), k in zip(d.dots, d.dot_dst)
         )
         out.append(f'<g{tag("link:gate")} fill="{ink}">{dots}</g>')
@@ -2047,6 +3249,10 @@ def render_diagram(
                 if weights is not None or named:
                     body = f'<g data-c="{c.key}">{body}</g>'
                 arrive = f' data-arrive="{c.arrive:.3f}"' if tags and c.arrive is not None else ""
+                if tags and d.slide and c.key in d.slide[0]:
+                    arrive += ' data-slide=""'
+                if tags and unfocused(d, cell=c.key):
+                    arrive += ' data-dim=""'
                 out.append(
                     f'<g{tag("cell:" + kind)}{at(d.steps.get(c.key, 0), (c.key,))}{arrive}>{body}</g>'
                     if tags
@@ -2060,10 +3266,11 @@ def render_diagram(
         loop_k = "link:" + LINKS[s.style].get("legend_as", s.style)
         fade = "" if s.opacity == 1 else f' opacity="{fmt(s.opacity)}"'
         (x0, y0), (x1, y1) = s.pts[0], s.pts[-1]
+        mk = f' marker-end="url(#{marker_id})"' if s.arrow else ""  # the arrow into an input
         out.append(
             f'<line{tag("cell:" + cell.kind + " " + loop_k)}{at(seg_step(s), s.ends)}{late} '
             f'x1="{fmt(x0)}" y1="{fmt(y0)}" x2="{fmt(x1)}" y2="{fmt(y1)}" stroke="{ink}" '
-            f'stroke-width="{LINE}" stroke-linecap="round"{fade}/>'
+            f'stroke-width="{LINE}" stroke-linecap="round"{fade}{mk}/>'
         )
     for (
         p,
@@ -2427,7 +3634,9 @@ def poster_svg(doc: dict, diagrams: dict, theme: str = "light") -> str:
     width = 2 * M + COLS * W + (COLS - 1) * GX
     parts, y = [], M
     parts.append(type_text(M, y + 38, doc["title"], "title", "display", ink, 500))
-    parts.append(type_text(M, y + 78, doc["subtitle"], "subtitle", "body", ink))
+    parts.append(
+        type_text(M, y + 78, doc.get("poster_subtitle", doc["subtitle"]), "subtitle", "body", ink)
+    )
     reading = wrap_text(doc["reading"], "body", TYPE["reading"][0], POSTER_TEXT * (width - 2 * M))
     lh = READING_LH * TYPE["reading"][0] / 15
     for i, line in enumerate(reading):
@@ -2439,7 +3648,7 @@ def poster_svg(doc: dict, diagrams: dict, theme: str = "light") -> str:
     y += leg_h + 40
     notes = footnotes(doc)
     part = None
-    for row in pack_rows(doc["sections"]):
+    for row in pack_rows(poster_sections(doc)):
         head = row[0][0].get("part")
         if head and head != part:  # a part opens: its label over a rule the full width
             part = head
@@ -2824,6 +4033,33 @@ def write_icons(out: str):
 
 # The link preview: what Slack, iMessage, Bluesky, and the like show for a shared link to the page.
 PREVIEW_SIZE = (1200, 630)
+# The poster's panels: the page may list more (and more sections) than the poster has room
+# for, so the poster keeps its own list, in its own order within each section
+POSTER_PANELS = [
+    *("perceptron", "mlp", "kan"),
+    *("autoencoder", "sparse_ae", "denoising_ae"),
+    *("hopfield", "som", "boltzmann", "rbm", "dbn", "modern_hopfield"),
+    *("cnn", "resnet", "unet", "wavenet", "rbf", "siamese"),
+    *("rnn", "lstm", "birnn", "gru", "rnn_attention", "ntm"),
+    *("transformer", "bert", "gpt", "vit", "clip", "diffusion_llm"),
+    *("linear_attention", "mamba", "mamba_hybrid"),
+    *("gnn", "moe", "capsnet"),
+    *("vae", "gan", "normalizing_flow", "diffusion", "flow_matching"),
+    "policy_gradient",
+]
+
+
+def poster_sections(doc: dict) -> list:
+    """The page's sections, each keeping only its poster panels; a section with none is left
+    off the poster."""
+    out = []
+    for sec in doc["sections"]:
+        panels = [p for p in sec["panels"] if p in POSTER_PANELS]
+        if panels:
+            out.append(dict(sec, panels=panels))
+    return out
+
+
 PREVIEW_PANELS = [  # landmarks across the families, one each, chosen to look unlike one
     # another at thumbnail size (so not both LSTM and Mamba, or diffusion and PPO); drawn in order of
     # year (ties as listed), in two rows of five;
@@ -2946,7 +4182,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 f"{render_diagram(d, mid, tags=True)}</svg>"
             )
             cards.append(
-                f'<button class="card" type="button" data-id="{pid}">{svg}'
+                f'<button class="card" type="button" data-id="{pid}"{has_attr(a)}>{svg}'
                 f'<span class="row"><span class="name">{html.escape(a["name"])}</span>'
                 f'<span class="year">{a["year"]}</span></span>'
                 f'<span class="cap">{prose_html(caption)}</span>'
@@ -2981,6 +4217,8 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 caption=plain(caption),
                 captionHtml=prose_html(caption),
                 objective=a["objective"],
+                objectiveGloss=objective_gloss(doc, a["objective"]),
+                has=has_text(a),
                 objectiveNote=a.get("objective_note", ""),
                 objectiveMath=math_html(a.get("objective_math") or OBJECTIVE_MATH[a["objective"]]),
                 alsoObjectives=a.get("also_objectives", []),
@@ -2988,9 +4226,21 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 related=related_of(doc, pid),
                 note=" ".join(notes[pid]) if pid in notes else "",
                 summary=plain(a["summary"].strip()),
-                summaryHtml=prose_html(a["summary"].strip()),
                 read=plain(a.get("read", "").strip()),
-                readHtml=prose_html(a.get("read", "").strip()),
+                # glossary terms link to their entries, the first use of each in the panel
+                **dict(
+                    zip(
+                        ("summaryHtml", "readHtml"),
+                        link_terms(
+                            doc,
+                            [
+                                prose_html(a["summary"].strip()),
+                                prose_html(a.get("read", "").strip()),
+                            ],
+                            pid,
+                        ),
+                    )
+                ),
                 papers=papers,
                 search=text,
                 key=dict(
@@ -3024,7 +4274,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <div class="titlebar"><h1>{html.escape(doc["title"])}</h1>
 {save_html(mode)}
 <button class="icon-btn" type="button" id="help" aria-label="What is a neural network?" title="What is a neural network?" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.9.7c0 1.7-2.5 2.2-2.5 3.8"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg></button>
-{source_button(doc)}<button class="icon-btn" type="button" id="theme" aria-label="Switch to dark mode" title="Switch to dark mode">{THEME_ICONS}</button></div>
+{glossary_button(doc)}{source_button(doc)}<button class="icon-btn" type="button" id="theme" aria-label="Switch to dark mode" title="Switch to dark mode">{THEME_ICONS}</button></div>
 <div><p class="lede">{html.escape(doc["subtitle"])}</p>
 <p class="reading">{html.escape(doc["reading"])} Select a diagram for its explanation, key, and papers.</p></div>
 {legend_html(cells, links)}
@@ -3047,10 +4297,11 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <footer><span>{credit_html(doc)}</span><span>{html.escape(notice(doc))}{license_html(doc)}{repo_html(doc)} · Last updated <time datetime="{page_updated_date(doc).isoformat()}">{date_text(page_updated_date(doc))}</time></span></footer>
 </div>
 {primer_html(doc, diagrams)}
+{glossary_html(doc, diagrams)}
 <dialog id="detail" aria-labelledby="d-name">
 <div class="d-wrap">
 <div class="d-side">
-<div class="d-keybox"><h3 class="d-label">Key</h3><div class="d-key" id="d-key"></div></div>
+<div class="d-keybox"><h3 class="d-label">Key</h3><div class="d-key" id="d-key"></div><p class="d-has" id="d-has" hidden></p></div>
 <div class="d-tools"><h3 class="d-label">Diagram</h3>
 <div class="d-flowctl" id="d-flowctl" data-state="idle" hidden><button class="d-stop" type="button" id="d-stop" aria-label="Stop" title="Stop"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button><button class="d-play" type="button" id="d-play"><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6" width="4" height="12" rx="1"/><rect x="13.5" y="6" width="4" height="12" rx="1"/></svg><span>Step through</span></button></div>
 <button class="d-more" type="button" id="d-more" aria-label="Diagram actions" title="Diagram actions" aria-haspopup="menu" aria-expanded="false" aria-controls="d-menu" data-credit="{html.escape(panel_credit(doc))}" data-ink="{INK_LIGHT}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
@@ -3061,6 +4312,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 </div>
 </div>
 <div class="d-fig" id="d-fig"></div>
+<div class="d-read" id="d-read-wrap"><h3 class="d-label">Reading the diagram</h3><p id="d-read"></p></div>
 </div>
 <div class="d-text">
 <div class="d-head"><p class="d-kicker" id="d-kicker"></p><button class="d-link" type="button" id="d-link" aria-label="Copy a link to this entry" title="Copy link" hidden><span class="d-link-done" aria-live="polite"></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7"/></svg></button></div>
@@ -3069,7 +4321,6 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <p class="d-cap" id="d-cap"></p>
 <p class="d-note" id="d-note" hidden></p>
 <p id="d-summary"></p>
-<div id="d-read-wrap"><h3>Reading the diagram</h3><p id="d-read"></p></div>
 <div id="d-rel-wrap"><h3>Related</h3><div class="d-rel" id="d-rel"></div></div>
 <h3>Objective</h3><p id="d-objective"></p><p class="d-math" id="d-math"></p>
 <h3>Papers</h3><ul class="d-papers" id="d-papers"></ul>
@@ -3100,7 +4351,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
         f'<link rel="preconnect" href="https://fonts.googleapis.com">\n'
         f'<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
         f'<link rel="stylesheet" href="{FONT_LINK}">\n'
-        f"<style>\n{PAGE_CSS}</style>\n"
+        f"<style>\n{figure_palette_css()}{PAGE_CSS}</style>\n"
         "<script>try{var t=localStorage.getItem('field-guide-theme');"
         "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>\n"
     )
@@ -3124,23 +4375,25 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 def load(path: str) -> dict:
     with open(path, encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
-    doc["subtitle"] = subtitle_text(doc)
+    template = doc["subtitle"]
+    doc["subtitle"] = subtitle_text(doc, template, doc["sections"])  # the page's
+    doc["poster_subtitle"] = subtitle_text(doc, template, poster_sections(doc))
     return doc
 
 
-def subtitle_text(doc: dict) -> str:
+def subtitle_text(doc: dict, template: str, sections: list) -> str:
     """The subtitle with its counts and ends filled in from the chart: {count} is the number
     of panels, {first} and {last} the oldest and newest (ties go to the one placed first, or
     last, on the poster), each as its `in_text` reads in a sentence or else its name, and
     {first_year} and {last_year} their years."""
     arch = doc["architectures"]
-    placed = [p for s in doc["sections"] for p in s["panels"] if p in arch]
+    placed = [p for s in sections for p in s["panels"] if p in arch]
     if not placed:
-        return doc["subtitle"]
+        return template
     first = min(placed, key=lambda p: arch[p]["year"])
     last = max(reversed(placed), key=lambda p: arch[p]["year"])
     said = lambda p: arch[p].get("in_text") or arch[p]["name"]
-    return doc["subtitle"].format(
+    return template.format(
         count=len(placed),
         first=said(first),
         first_year=arch[first]["year"],

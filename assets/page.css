@@ -150,15 +150,15 @@ dialog[open] { display: flex; flex-direction: column; scrollbar-gutter: stable; 
 dialog[open] > .d-wrap { flex: 1 0 auto; grid-template-rows: 1fr auto; padding-bottom: 0; }
 /* A hairline between the drawing and its text, centered in the 28px gap and as tall as the text
    column; across the top of the text instead when the popup is one column */
-dialog[open] .d-text { align-self: stretch; border-left: 1px solid var(--rule); margin-left: -14px; padding-left: 13px; }
+dialog[open] .d-wrap > .d-text { align-self: stretch; border-left: 1px solid var(--rule); margin-left: -14px; padding-left: 13px; }
 dialog[open] .d-nav { align-self: end; }
 dialog::backdrop { background: var(--scrim); }
 /* The primer: a narrow reading column, as tall as a panel */
-dialog#primer { width: min(640px, calc(100vw - 32px)); }
-dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), scrolling inside */
+dialog#primer, dialog#glossary { width: min(640px, calc(100vw - 32px)); }
+dialog#primer[open], dialog#glossary[open] { display: block; }  /* as tall as a panel (dialog[open]), scrolling inside */
 .p-wrap { padding: 28px 28px 8px; }
 .p-wrap h2 { font-family: var(--display); font-weight: 500; font-size: 24px; line-height: 1.2; margin: 0 0 4px; }
-.p-wrap h2:focus { outline: none; }
+.p-wrap h2:focus, .p-wrap h3:focus { outline: none; }  /* focused only to move a reader there */
 /* the primer reads as a short article: its sections get real headings, a step above the key's
    group names and below the title */
 .p-wrap h3 { font-family: var(--display); font-weight: 500; font-size: 18px; line-height: 1.3;
@@ -189,6 +189,32 @@ dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), s
 .p-read { min-height: 2.9em; margin: 4px 0 0; font: 13px/1.45 var(--mono); color: var(--muted); }
 /* under a primer figure with its own step-through or tips: the controls, then the explanation */
 .p-fig-ctl { display: grid; gap: 4px; justify-items: start; }
+.p-say { min-height: 3em; margin: 4px 0 0; font: 14px/1.5 var(--body); color: var(--muted); }
+/* the glossary: an index of its terms, then each entry, with the panels that use it */
+.p-wrap .g-index { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 0; font-size: 13.5px; }
+.g-group { margin-top: 20px; }
+.g-group + .g-group { margin-top: 14px; }
+/* a group's name, over its terms in the index and over its entries, as the panel's section labels */
+.p-wrap .g-gname, .p-wrap .g-sec { margin: 0; font-family: var(--display); font-weight: 500;
+  font-size: 11px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--muted); }
+.p-wrap .g-sec { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.p-wrap .g-sec + h3 { margin-top: 10px; }
+.p-wrap .g-lead { font-weight: 600; }
+.p-wrap .g-lead + p { margin-top: 6px; }  /* the rest of the entry follows its lead closely */
+.p-wrap p.g-used { margin-top: 10px; }  /* close under the entry it belongs to */
+.p-wrap .g-used + .g-src { margin-top: 2px; }
+.g-index a { color: var(--ink); text-decoration: none; padding: 4px 11px; border: 1px solid var(--rule);
+  border-radius: 8px; line-height: 1.4; }
+.g-index a:hover { border-color: var(--muted); background: var(--surface); }
+.g-used { font-size: 14px; color: var(--muted); }
+.g-used .k { font-weight: 700; }
+.g-used button, .g-link { font: inherit; color: inherit; background: none; border: 0; padding: 0;
+  cursor: pointer; text-underline-offset: 3px; }
+.g-used button, .g-used a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.g-src a::after { content: "\2197"; margin-left: 1px; font-size: 0.85em; }  /* leaves the page; a panel's cite stays */
+/* a glossary term in a panel's text: dotted, so it reads as a definition, not a link away */
+.g-link { text-decoration: underline dotted; text-decoration-color: var(--muted); }
+.g-link:hover { text-decoration-color: currentColor; }
 .p-tips .p-read { font: 14px/1.5 var(--body); min-height: 3em; }
 .p-names text { font: 9px var(--body); fill: var(--muted); }
 .p-key { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; max-width: 62ch; }
@@ -207,6 +233,9 @@ dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), s
   text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
 .d-fig { min-width: 0; }
 .d-fig svg { width: 100%; height: auto; display: block; }
+/* reading the diagram, under the drawing it explains */
+.d-read { margin-top: 6px; }
+.d-read p { margin: 0; font-size: 14px; line-height: 1.55; }
 /* a key entry and the parts of the drawing it stands for light up together, and the rest
    fades: a hover previews it, a click pins it */
 .d-fig [data-k], .d-key li, .card svg [data-k], .card, .legend li { transition: opacity 0.12s; }
@@ -214,13 +243,74 @@ dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), s
 .d-fig svg.hl [data-k]:not(.on), .card svg.hl [data-k]:not(.on) { opacity: 0.14; }
 .d-key.hl li:not(.on), .legend.hl li[data-k]:not(.on) { opacity: 0.35; }
 .card.lg-out { opacity: 0.3; }
+/* a card whose network has the selected part but doesn't draw it: kept, its outline dashed */
+.card.lg-has { outline: 1px dashed var(--muted); outline-offset: -1px; }
+.d-has { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
 .d-key li, .legend li[data-k] { margin: -3px -6px; padding: 3px 6px; border-radius: 6px; }
 .d-key li:focus-visible, .legend li[data-k]:focus-visible { outline: 2px solid var(--ink); outline-offset: 0; }
 /* Step through: parts not reached yet fade, and light up in turn */
 .d-fig [data-s], .d-fig [data-on] { transition: opacity 0.25s; }
+.d-fig [data-k] { cursor: pointer; }  /* a click selects its key entry */
 :is(.d-fig, .p-fig).flow [data-s].later, :is(.d-fig, .p-fig).flow [data-on].later { opacity: 0.1; }
 :is(.d-fig, .p-fig).flow [data-on].mid { opacity: 0.65; }  /* a hand-written step's cells read from */
 :is(.d-fig, .p-fig).flow [data-on].past { opacity: 0.3; }  /* and cells lit in an earlier step */
+/* a glossary figure's sliding filter glides to each place it reads, its lines with it */
+.p-fig [data-slide] { transition: opacity 0.25s, transform calc(var(--draw, 600ms) * 0.6) ease-in-out; }
+.p-fig.flow [data-slide] { transition-delay: 0s !important; }
+/* a glossary figure at rest: what it explains stands out, the rest faded; stepping shows all */
+.p-fig:not(.flow) [data-dim] { opacity: 0.25; }
+.p-notes { color: var(--muted); }  /* moves at once, lit already */
+/* a sliding figure at rest: its later places drawn faintly, and which way it goes */
+.p-fig .p-ghost { opacity: 0.25; transition: opacity 0.25s; }
+.p-fig .p-ghost-arrow { color: var(--muted); transition: opacity 0.25s; }
+.p-fig.flow :is(.p-ghost, .p-ghost-arrow) { opacity: 0; }
+.p-fig .p-rest { transition: opacity 0.25s; }  /* what only the rest view shows: an angle */
+.p-fig.flow .p-rest { opacity: 0; }
+/* The glossary figures' own colors come from the palette (--fig-*, written by guide.py), in
+   the cells' roles: red for an output, yellow for an input, green for pulled together, red
+   lines for pushed apart or wrong, blue for a second one to compare. A region is neutral (a
+   gray band), and groups are told apart by shape, not hue */
+.p-fig .tone-pull { stroke: var(--fig-green); }
+.p-fig .tone-push { stroke: var(--fig-red); }
+/* a glossary figure on the plane of two inputs (XOR): the cases as points, lines splitting it */
+.p-plane .pl-frame { fill: none; stroke: var(--rule); }
+.p-plane .pl-cross { fill: none; stroke: var(--rule); }
+.p-plane .pl-line { stroke: currentColor; stroke-width: 1.3; }
+.p-plane .pl-pt circle { fill: var(--bg); stroke: currentColor; stroke-width: 1.3; }
+.p-plane .pl-pt.on circle { fill: currentColor; }
+.p-plane .pl-label { font: 8px var(--body); fill: var(--muted); }
+.p-plane .pl-axis { font: 9px var(--body); fill: var(--muted); }
+.p-plane .pl-note { font: 600 9px var(--body); fill: currentColor; }
+.p-plane .pl-band { fill: var(--rule); }  /* a region: the page's neutral, not a hue */
+.p-plane .pl-arc { fill: none; stroke: var(--muted); stroke-width: 0.9; }
+.p-plane .pl-vec line { stroke: currentColor; stroke-width: 1.3; }
+.p-plane .pl-vec polygon { fill: currentColor; }
+.p-plane .pl-turn line { stroke: var(--fig-blue); }
+.p-plane .pl-turn polygon { fill: var(--fig-blue); }
+.p-plane .pl-grp { fill: var(--fig-yellow-fill); stroke: var(--fig-yellow-line); stroke-width: 0.9; }  /* the data: inputs, their groups told apart by shape */
+.p-plane .pl-grp .pl-none { fill: var(--bg); stroke: var(--fig-yellow-line); stroke-width: 1; }
+.p-plane .pl-center { fill: var(--fig-green-fill); stroke: var(--fig-green-line); stroke-width: 1.2; }  /* what is learned: hidden units, as SOM's map */
+.p-plane .pl-center path { stroke: var(--bg); stroke-width: 1.4; }
+.p-plane .pl-bounds line { stroke: var(--muted); stroke-width: 0.9; stroke-dasharray: 3 2; }
+.p-plane.flow .pl-bounds:not(.later) { transition-delay: 1.4s; }  /* once the centers have moved */
+.p-plane [data-move] { transition: opacity 0.25s, transform 1.6s ease-in-out; }
+.p-plane.flow [data-on].later, .p-plane:not(.flow) [data-gone] { opacity: 0; }
+.p-plane.flow :is(.pl-wrong, .pl-note):not(.later) { transition-delay: 1.4s; }  /* once the line has moved */
+/* a chart figure (ReLU, a bump, a spline, quantization, softmax) */
+.p-chart .cv-curve { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+.p-chart .cv-faint { stroke: var(--muted); stroke-width: 1; }
+.p-chart .cv-blue { stroke: var(--fig-blue); }  /* a second one to compare */
+.p-chart .cv-alt { stroke: var(--muted); }  /* a spline's every other piece */
+.p-chart .cv-levels { fill: none; stroke: var(--rule); stroke-dasharray: 2 2; }
+.p-chart .cv-stair { fill: none; stroke: var(--fig-red); stroke-width: 1.4; }
+.p-chart :is(.cv-sample, .cv-dot .cv-out) { fill: var(--fig-red-fill); stroke: var(--fig-red-line); stroke-width: 0.8; }  /* an output */
+.p-chart .cv-dot .cv-foot { fill: var(--fig-yellow-fill); stroke: var(--fig-yellow-line); stroke-width: 0.8; }  /* the input it reads */
+.p-chart .cv-ctl { fill: var(--bg); stroke: currentColor; stroke-width: 1.2; }
+.p-chart .cv-guide { stroke: var(--muted); stroke-width: 0.8; stroke-dasharray: 2 2; }
+.p-chart .cv-bar { fill: var(--fig-red-fill); }  /* an output */
+.p-chart .cv-in { fill: var(--fig-yellow-fill); stroke: var(--fig-yellow-line); stroke-width: 0.8; }  /* softmax's input scores */
+.p-chart .cv-arrow { color: var(--muted); }
+.p-chart .cv-val { font: 8px var(--body); fill: var(--muted); }
 /* while stepping, a cell lights once the lines drawing in have reached it */
 :is(.d-fig, .p-fig).flow [data-k^="cell:"]:not(.later):not(.mid):not(.past) { transition-delay: calc(var(--draw, 600ms) * 0.9); }  /* as its lines arrive */
 /* an output's stem past a return line, and the line up to it, light with the output, as one
@@ -264,8 +354,9 @@ dialog#primer[open] { display: block; }  /* as tall as a panel (dialog[open]), s
 .d-menu button:hover, .d-menu button:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent);
   outline: none; }
 .d-text { min-width: 0; }
-.d-head { display: flex; align-items: center; gap: 6px; min-height: 30px; margin: -6px 0 0; }
-.d-kicker { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0; flex: 1; }
+.d-head { display: flex; align-items: flex-start; gap: 6px; min-height: 30px; margin: -6px 0 0; }
+/* a kicker that wraps keeps the link button level with its first line */
+.d-kicker { font-family: var(--mono); font-size: 12px; line-height: 16px; padding-top: 7px; color: var(--muted); margin: 0; flex: 1; }
 /* the entry's link, at the end of the kicker line: an icon, with a word when it has copied */
 .d-link { height: 30px; min-width: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 0 6px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted);
@@ -326,9 +417,18 @@ dialog.more .nav-more { opacity: 1; visibility: visible; }
 dialog.instant .nav-more { transition: none; }
 @media (max-width: 760px) {
   .d-menu.pm-menu { left: auto; right: 0; }
-  .d-wrap { grid-template-columns: 1fr; padding: 20px; gap: 16px; }
-  dialog[open] > .d-wrap { grid-template-rows: auto auto 1fr; padding-bottom: 0; }
-  dialog[open] .d-text { border-left: 0; margin-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 16px; }
+  /* one column, in reading order: the name first, then the drawing and how to read it, then
+     its key, then the rest of the text */
+  .d-wrap { display: flex; flex-direction: column; padding: 20px; gap: 0; }
+  .d-side, .d-wrap > .d-text { display: contents; }
+  .d-text > * { order: 6; }
+  .d-text > .d-head, .d-text > #d-name, .d-text > .d-full, .d-text > .d-cap, .d-text > .d-note { order: 1; }
+  .d-tools { order: 2; }
+  .d-fig { order: 3; }
+  .d-read { order: 4; margin-top: 12px; }
+  .d-keybox { order: 5; margin-top: 20px; }
+  .d-text > #d-summary { margin-top: 20px; }
+  .d-wrap > .d-nav { order: 7; margin-top: auto; }
   .d-text h3 { margin-top: 20px; }
   .d-text .d-cap { margin-bottom: 20px; }
   .d-text .d-note { margin: -12px 0 20px; }

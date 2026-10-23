@@ -14,7 +14,8 @@
 #            recurrent: also from the previous state cell, hooked onto the dot from above
 #   dim      indices drawn faded (inactive or low weight); edges touching them fade too
 #   level / y / xs / ys / pitch / ring: placement overrides (normally automatic)
-#   marks    false: leave this row's cells without their group mark (e.g. a picture's patches)
+#   marks    false: leave this row's cells without their group mark (e.g. a picture's patches);
+#            a list gives it cell by cell
 # Panel-level extras: links (extra rules between any rows), arcs (skip connections) and
 # loops (return arrows, style `loop`), both elbows beside the layers with `side` and optional
 # `reach` (an arc between two whole rows of the same size is drawn once per column; a loop
@@ -42,6 +43,9 @@
 # Captions, summaries and reading notes mark variables the same way: picks `k` experts.
 # `also_objectives` lists further objectives the landmark paper itself trained it with; like
 # `also`, only the page's filter and panel show them, and the poster keeps one objective.
+# `contains` names key entries the network has but its panel doesn't draw (the residual
+# connections inside each Transformer block): the legend outlines its card for them, and its
+# panel says so under the key.
 # `related` links panels: kind_of (a more specific version of), builds_on (a direct ancestor),
 # built_with (the networks it is usually built from). Each is written once, on the more specific
 # panel; the page shows it from both ends (Kind of / Kinds, Builds on / Led to,
@@ -198,6 +202,1548 @@ figures:
     arcs:   # the skip paths, each around one step
       - {from: [x, 2], to: [n1, 0], side: right}
       - {from: [n1, 0], to: [n2, 0], side: right}
+
+  # ---- glossary figures: each steps through one idea, with a `say` line per step
+  attention_read:   # one token's attention
+    rows:
+      - {id: x, cell: input, n: 4, xs: [44, 84, 124, 164], y: 130}
+      - {id: a, cell: attention, n: 1, xs: [164], y: 72, connect: full, from: x, style: cross}
+      - {id: y, cell: output, n: 1, xs: [164], y: 14, connect: one, from: a}
+    flow:
+      - {to: x, say: "Four tokens, each a vector of numbers. The last one is about to look back at all four, itself included."}
+      - {to: a, from: x, say: "It compares its query with each token's key, giving each a score for how well they match (dashed: a weight set by similarity)."}
+      - {to: [a, [x, 1], [x, 3]], within: true, say: "A softmax turns the scores into weights that add up to 1. Here tokens 2 and 4 match best, so they get most of the weight."}
+      - {to: y, from: a, say: "It adds up every token's value, each times its weight: a new vector for the last token. Every token does the same at once, with its own query."}
+
+  convolution_slide:   # one filter, moved along a row: the same weights at every place
+    rows:
+      - {id: x, cell: input, n: 6, pitch: 35.2, y: 130}
+      - {id: f, cell: conv, n: 1, xs: [51.2], y: 84}   # the filter, over the first window
+      - {id: m, cell: hidden, n: 4, pitch: 35.2, y: 24}   # the feature map it writes
+    links:
+      - {from: x, to: f, rule: pairs, pairs: [[0, 0], [1, 0], [2, 0]]}
+      - {from: f, to: m, rule: pairs, pairs: [[0, 0]]}
+    slide: {cells: f, by: 35.2, at: [0, 0, 1, 2, 3, 3], ghosts: true}   # where the filter sits at each step; at rest, faintly at each
+    flow:
+      - {to: x, say: "An input row: six numbers, such as one line of an image's pixels."}
+      - {to: [f, [m, 0]], from: [[x, 0], [x, 1], [x, 2]], say: "A filter of three weights reads the first three inputs and writes one number: how strongly its pattern appears there."}
+      - {to: [f, [m, 1]], from: [[x, 1], [x, 2], [x, 3]], say: "It slides one step and reads the next three, with the same three weights. Sharing them is what makes it a convolution."}
+      - {to: [f, [m, 2]], from: [[x, 2], [x, 3], [x, 4]], say: "Again with the same weights, so the pattern is found wherever it occurs."}
+      - {to: [f, [m, 3]], from: [[x, 3], [x, 4], [x, 5]], say: "And once more, at the end of the row."}
+      - {to: m, say: "The result is a feature map, two shorter than the input here. A layer runs many filters, each making its own map."}
+
+  gate_step:   # a gate on a state arrow
+    rows:
+      - {id: x, cell: input, n: 2, xs: [56, 152], y: 130}
+      - {id: s, cell: recurrent, n: 2, xs: [56, 152], y: 58, connect: one, from: x, chain: right, gate: true}
+    focus: {styles: [gate]}   # at rest, the gate's line and dot stand out
+    flow:
+      - {to: [[x, 0], [s, 0]], within: true, say: "The state so far: what the network carries from step to step."}
+      - {to: [x, 1], say: "A new input arrives."}
+      - {to: [s, 1], from: [[s, 0], [x, 1]], say: "The input sets the gate at the dot, a number from 0 to 1: near 0 shuts the old state out, near 1 lets it through. The new state combines what passes with the input."}
+
+  recurrence_steps:   # one network, run once per step
+    rows:
+      - {id: x, cell: input, n: 4, y: 130}
+      - {id: h, cell: recurrent, n: 4, y: 72, connect: one, from: x, chain: right}
+      - {id: y, cell: output, n: 4, y: 14, connect: one, from: h}
+    focus: {cells: h}   # at rest, the state and the arrows carrying it stand out
+    flow:
+      - {to: [[x, 0], [h, 0], [y, 0]], within: true, say: "The first input sets the state, which gives the first output."}
+      - {to: [[x, 1], [h, 1], [y, 1]], within: true, from: [h, 0], say: "The state is passed on (the arrow). The second input updates it, with the same weights as the first."}
+      - {to: [[x, 2], [h, 2], [y, 2]], within: true, from: [h, 1], say: "And again: one step per input, the state carrying a summary of everything so far."}
+      - {to: [[x, 3], [h, 3], [y, 3]], within: true, from: [h, 2], say: "Earlier inputs reach this output only through the state, which is why long memories are hard; LSTMs and GRUs add gates to help."}
+
+  residual_add:   # a skip path around a layer
+    rows:
+      - {id: x, cell: input, n: 1, xs: [104], y: 130}
+      - {id: h, cell: hidden, n: 2, xs: [64, 104], y: 72, connect: full, from: x}   # none on the right, where the skip path runs
+      - {id: y, cell: output, n: 1, xs: [104], y: 14, connect: full, from: h}
+    arcs:
+      - {from: [x, 0], to: [y, 0], side: right}
+    focus: {cells: [x, y], styles: [skip]}   # at rest, the skip path stands out
+    flow:
+      - {to: x, say: "An input vector."}
+      - {to: h, from: x, say: "A layer computes something from it."}
+      - {to: y, from: [h, x], say: "The input also goes around the layer, by the skip path, and is added to its output. So the layer only has to learn a change; if it learns none, the input passes straight through."}
+
+  routing_pick:   # a router sending each token to two experts
+    rows:
+      - {id: t, cell: input, n: 3, xs: [56, 104, 152], y: 130}
+      - {id: r, cell: router, n: 3, xs: [56, 104, 152], y: 104, connect: one, from: t}
+      - {id: e, cell: network, n: 4, xs: [32, 80, 128, 176], y: 62}
+      - {id: y, cell: output, n: 3, xs: [56, 104, 152], y: 14}
+    links:
+      - {from: r, to: e, rule: pairs, pairs: [[0, 0], [0, 1], [1, 1], [1, 3], [2, 2], [2, 3]]}
+      - {from: e, to: y, rule: pairs, pairs: [[0, 0], [1, 0], [1, 1], [3, 1], [2, 2], [3, 2]]}
+    focus: {cells: [r, e]}   # at rest, the routers and the experts they pick stand out
+    flow:
+      - {to: t, say: "Three tokens."}
+      - {to: r, from: t, say: "For each token, a router, a small layer, scores every expert."}
+      - {to: e, from: r, say: "Each token goes only to its two best-scoring experts, so most of the network sits idle for any one token."}
+      - {to: y, from: e, say: "Each output adds up its two experts' answers, weighted by the router's scores."}
+
+  layer_rows:   # a network as a stack of layers
+    rows:
+      - {id: x, cell: input, n: 3}
+      - {id: h1, cell: hidden, n: 4, connect: full}
+      - {id: h2, cell: hidden, n: 4, connect: full}
+      - {id: y, cell: output, n: 2, connect: full}
+    focus: {cells: h1, into: true}   # at rest, one layer and the weights into it stand out
+    flow:
+      - {to: x, say: "The input layer: one unit for each number coming in."}
+      - {to: h1, from: x, say: "A hidden layer: every unit reads all the inputs, each with its own weights, and they work side by side."}
+      - {to: h2, from: h1, say: "The next layer reads the one before, so it can build on what that one found."}
+      - {to: y, from: h2, say: "The output layer gives the answer. A network's depth is its number of layers."}
+
+  backprop_pass:   # a forward pass, then the error passed back
+    rows:
+      - {id: x, cell: input, n: 2}
+      - {id: h, cell: hidden, n: 3, connect: full}
+      - {id: y, cell: output, n: 1, connect: full}
+    notes:
+      - {from: y, to: x, arrow: true, label: Error passed back}
+    flow:
+      - {to: [x, h, y], within: true, say: "Forward: the input passes up through the network to an output."}
+      - {to: y, say: "The output is compared with the right answer. The loss measures how far off it is."}
+      - {to: h, from: y, say: "Backward: the error is passed back down each line, giving each weight its share of the blame, its gradient."}
+      - {to: x, from: h, say: "And on down to the first layer's weights. Then every weight takes a small step that shrinks the error; repeated over many examples, that is training."}
+
+  causal_steps:   # each token reads only itself and the tokens before it
+    rows:
+      - {id: x, cell: input, n: 4, y: 118}
+      - {id: a, cell: attention, n: 4, y: 40, connect: causal, from: x, style: cross}
+    flow:
+      - {to: [[x, 0], [a, 0]], within: true, say: "The first token can read only itself."}
+      - {to: [[x, 1], [a, 1]], within: true, from: [x, 0], say: "The second reads the first and itself."}
+      - {to: [[x, 2], [a, 2]], within: true, from: [[x, 0], [x, 1]], say: "The third reads the first three."}
+      - {to: [[x, 3], [a, 3]], within: true, from: [[x, 0], [x, 1], [x, 2]], say: "The last reads them all. No token ever sees one after it, so when the model learns to predict the next token, the answer is never in view."}
+
+  pooling_max:   # max pooling over pairs
+    rows:
+      - {id: x, cell: conv, n: 4, y: 118}
+      - {id: p, cell: conv, n: 2, xs: [56, 152], y: 40}
+    links:
+      - {from: x, to: p, rule: pairs, pairs: [[0, 0], [1, 0], [2, 1], [3, 1]]}
+    flow:
+      - {to: x, say: "A feature map: four positions, each saying how strongly a pattern appears there."}
+      - {to: [[p, 0], [x, 1]], within: true, say: "Max pooling looks at each pair and keeps the larger value: here the second."}
+      - {to: [[p, 1], [x, 2]], within: true, say: "Then the next pair, where the first is larger."}
+      - {to: p, say: "Half as many positions remain. They still say whether the pattern appeared, and roughly where."}
+
+  encdec_squeeze:   # an encoder into a code, a decoder out of it
+    rows:
+      - {id: x, cell: input, n: 4}
+      - {id: c, cell: hidden, n: 2, connect: full}
+      - {id: y, cell: output, n: 4, connect: full}
+    notes:   # the braces stop short of the code, so the two read as two parts
+      - {from: x, to: c, label: Encoder, inset: 9}
+      - {from: c, to: y, label: Decoder, inset: 9}
+    flow:
+      - {to: x, say: "An input."}
+      - {to: c, from: x, say: "The encoder turns it into an internal code, often smaller: a summary of what matters in it."}
+      - {to: y, from: c, say: "The decoder turns the code into an output: the input again for an autoencoder, or a translation, or an image."}
+
+  contrastive_pairs:   # two photos and their captions, pulled together and pushed apart
+    rows:
+      - {id: i, cell: patch, n: 2, xs: [24, 24], ys: [104, 40]}
+      - {id: ie, cell: hidden, n: 2, xs: [76, 76], ys: [104, 40], connect: one, from: i}
+      - {id: te, cell: hidden, n: 2, xs: [132, 132], ys: [104, 40]}
+      - {id: t, cell: input, n: 2, xs: [184, 184], ys: [104, 40]}
+    links:
+      - {from: t, to: te, rule: one}
+      - {from: ie, to: te, rule: pairs, pairs: [[0, 0], [1, 1]], style: cross, tone: pull}   # matched: pulled together
+      - {from: ie, to: te, rule: pairs, pairs: [[0, 1], [1, 0]], style: cross, tone: push}   # mismatched: pushed apart
+    flow:
+      - {to: [i, t], say: "Two photos (left) and their two captions (right)."}
+      - {to: [ie, te], from: [i, t], say: "Each goes through its encoder to an embedding."}
+      - {to: [[ie, 1], [te, 1]], within: true, say: "Training raises the similarity of each photo and its own caption, pulling them together (green)..."}
+      - {to: [[ie, 1], [te, 0]], within: true, say: "...and lowers it with every other caption in the batch, pushing them apart (red)."}
+      - {to: [[ie, 0], [te, 0]], within: true, say: "The same for every photo and caption at once. Matching things end up close in one shared space, so a new photo can find its caption."}
+
+  bidir_rows:   # two recurrent rows, one each way, both read by each output
+    rows:
+      - {id: x, cell: input, n: 4, xs: [32, 80, 128, 176], y: 130}
+      - {id: f, cell: recurrent, n: 4, xs: [24, 72, 120, 168], y: 84, connect: one, from: x, chain: right}
+      - {id: b, cell: recurrent, n: 4, xs: [40, 88, 136, 184], y: 60, connect: one, from: x, chain: left}
+      - {id: y, cell: output, n: 4, xs: [32, 80, 128, 176], y: 14, connect: one, from: f}
+    links:
+      - {from: b, to: y, rule: one}
+    focus: {cells: [f, b, [y, 1]], styles: [state]}   # at rest: both rows running their ways, one output reading both
+    flow:
+      - {to: x, say: "A sequence of four inputs, such as the words of a sentence."}
+      - {to: f, from: x, within: true, say: "The forward row reads left to right: each state carries what came before it."}
+      - {to: b, from: x, within: true, say: "The backward row reads right to left: each state carries what comes after it."}
+      - {to: [y, 1], from: [[f, 1], [b, 1]], say: "Each output reads both rows at its position, so it knows what lies on both sides."}
+      - {to: y, from: [f, b], say: "Every position does the same. It needs the whole sequence up front, so it suits reading a sentence, not writing one a word at a time."}
+
+  dilation_tree:   # three causal layers, spaced 1, 2, 4: the newest output's reach
+    rows:
+      - {id: x, cell: input, n: 8, pitch: 26, y: 130}
+      - {id: c1, cell: conv, n: 8, pitch: 26, y: 91, dim: [0, 2, 4, 6], dim_opacity: 0.4}
+      - {id: c2, cell: conv, n: 2, xs: [91, 195], y: 52}   # only the units the newest output reaches
+      - {id: y, cell: output, n: 1, xs: [195], y: 14}
+    links:
+      - {from: x, to: c1, rule: pairs, pairs: [[0, 1], [1, 1], [2, 3], [3, 3], [4, 5], [5, 5], [6, 7], [7, 7]]}
+      - {from: c1, to: c2, rule: pairs, pairs: [[1, 0], [3, 0], [5, 1], [7, 1]]}
+      - {from: c2, to: y, rule: pairs, pairs: [[0, 0], [1, 0]]}
+    flow:
+      - {to: x, say: "Eight inputs in time, the oldest at the left. Follow how far back the newest output can see."}
+      - {to: [[c1, 1], [c1, 3], [c1, 5], [c1, 7]], from: x, say: "The first layer reads each input and the one just before it."}
+      - {to: c2, from: [[c1, 1], [c1, 3], [c1, 5], [c1, 7]], say: "The second reads two apart, so each of its units covers four inputs."}
+      - {to: y, from: c2, say: "The third reads four apart: the output now sees all eight inputs after three layers. Without the spacing, three layers would see only four."}
+
+  window_reach:   # a unit's window, and its windows' windows
+    rows:
+      - {id: x, cell: input, n: 7, pitch: 28, y: 130, dim: [0, 6], dim_opacity: 0.4}
+      - {id: h, cell: conv, n: 7, pitch: 28, y: 72, dim: [0, 1, 5, 6], dim_opacity: 0.4}
+      - {id: y, cell: output, n: 1, xs: [104], y: 14}
+    links:
+      - {from: x, to: h, rule: pairs, pairs: [[1, 2], [2, 2], [3, 2], [2, 3], [3, 3], [4, 3], [3, 4], [4, 4], [5, 4]]}
+      - {from: h, to: y, rule: pairs, pairs: [[2, 0], [3, 0], [4, 0]]}
+    flow:
+      - {to: y, say: "A unit in a convolutional network's second layer."}
+      - {to: [[h, 2], [h, 3], [h, 4]], from: y, say: "Its window: the three neighboring units below it that it reads. The same weights read a window like it at every position."}
+      - {to: [[x, 1], [x, 2], [x, 3], [x, 4], [x, 5]], from: [[h, 2], [h, 3], [h, 4]], say: "Each of those reads its own window of three inputs. They overlap, so together the top unit reaches five: each layer widens what a unit sees."}
+
+  clamp_ring:   # a Boltzmann machine with its visible units held at an example
+    rows:
+      - {id: u, cell: [prob, prob, backfed, backfed, backfed, prob], ring: {r: 58}}
+    links:
+      - {from: u, to: u, rule: complete}
+    notes:
+      - {from: [u, 2], to: [u, 3], label: Clamped}   # beside the visible units, the lower three
+    flow:
+      - {to: [[u, 2], [u, 3], [u, 4]], say: "The visible units (lower) are set to a training example and clamped: held at those values."}
+      - {to: [u, 0], from: u, hold: [[u, 2], [u, 3], [u, 4]], say: "The hidden units update one at a time, each from all the others, while the clamped units stay as they are."}
+      - {to: [u, 1], from: u, hold: [[u, 2], [u, 3], [u, 4]], say: "Another hidden unit updates around them..."}
+      - {to: [u, 5], from: u, hold: [[u, 2], [u, 3], [u, 4]], say: "...and another, until the hidden units settle into what the example implies."}
+      - {to: u, from: u, say: "Then the clamp is released and every unit updates freely, the visible ones too. A Boltzmann machine learns from the difference between the clamped and free runs."}
+
+  graph_parts:   # for Node: nodes, the edges between them, and one node's neighbors
+    rows:
+      - {id: v, cell: hidden, n: 7, xs: [104, 62, 146, 146, 62, 22, 186], ys: [72, 30, 30, 114, 114, 72, 72]}
+    links:
+      - {from: v, to: v, rule: pairs, pairs: [[5, 1], [1, 2], [2, 6], [6, 3], [3, 4], [4, 5], [1, 0], [2, 0], [3, 0], [4, 0]]}
+    focus: {cells: v, lines: false}   # at rest, the nodes stand out, the edges faded
+    flow:
+      - {to: v, say: "Seven nodes: the things a graph is about, such as atoms or people. Each holds a vector."}
+      - {to: v, from: v, say: "Edges join pairs of nodes: their relations, such as bonds or friendships. A node's neighbors are the nodes its edges reach."}
+      - {to: [v, 0], from: [[v, 1], [v, 2], [v, 3], [v, 4]], say: "In a graph network the middle node updates from its four neighbors' messages, sent along its edges. Repeated, information spreads across the graph."}
+
+  graph_edges:   # the same graph for Edge: at rest its edges stand out, the nodes faded
+    rows:
+      - {id: v, cell: hidden, n: 7, xs: [104, 62, 146, 146, 62, 22, 186], ys: [72, 30, 30, 114, 114, 72, 72]}
+    links:
+      - {from: v, to: v, rule: pairs, pairs: [[5, 1], [1, 2], [2, 6], [6, 3], [3, 4], [4, 5], [1, 0], [2, 0], [3, 0], [4, 0]]}
+    focus: {styles: [link]}
+    flow:
+      - {to: v, say: "Seven nodes: the things a graph is about, such as atoms or people. Each holds a vector."}
+      - {to: v, from: v, say: "Edges join pairs of nodes: their relations, such as bonds or friendships. A node's neighbors are the nodes its edges reach."}
+      - {to: [v, 0], from: [[v, 1], [v, 2], [v, 3], [v, 4]], say: "In a graph network the middle node updates from its four neighbors' messages, sent along its edges. Repeated, information spreads across the graph."}
+
+  context_slide:   # a window of four tokens moving along as text is generated
+    rows:
+      - {id: x, cell: input, n: 7, pitch: 28, y: 130}
+      - {id: a, cell: attention, n: 1, xs: [104], y: 72}
+      - {id: o, cell: output, n: 1, xs: [104], y: 14, connect: one, from: a}
+    links:
+      - {from: x, to: a, rule: pairs, pairs: [[0, 0], [1, 0], [2, 0], [3, 0]], style: cross}
+    slide: {cells: [a, o], by: 28, at: [0, 0, 1, 2]}
+    flow:
+      - {to: [[x, 0], [x, 1], [x, 2], [x, 3]], say: "A model with a context window of four tokens, and four tokens of text so far."}
+      - {to: [a, o], from: [[x, 0], [x, 1], [x, 2], [x, 3]], say: "To write the next token, it reads all four."}
+      - {to: [[x, 4], a, o], from: [[x, 1], [x, 2], [x, 3], [x, 4]], say: "That token joins the text. The window holds only four, so it moves on and the first token drops out of view: the model can no longer see it."}
+      - {to: [[x, 5], a, o], from: [[x, 2], [x, 3], [x, 4], [x, 5]], say: "And so on. Whatever lies outside the window is gone to the model; a longer window keeps more, at a higher cost."}
+
+  xor_plane:   # XOR on the plane of its two inputs: one line can't split its cases, two can
+    plane:
+      alt: "XOR's four cases as points on a square, with the two lines of a hidden layer around the two that are on"
+      points: [[0, 0, off], [1, 0, on], [0, 1, on], [1, 1, off]]   # each input, then the answer
+      labels: true   # each point named by its inputs
+    flow:   # `line`: the perceptron's one line, at [center, center, angle]; `keep`: a hidden unit's
+      - {say: "XOR's four cases, one point for each pair of inputs. The answer is on (filled) when exactly one input is on, off (hollow) when both are off or both on."}
+      - {line: [0.5, 0.5, 0], wrong: [[1, 1], [1, 0]], say: "A perceptron draws one straight line and says on for every point on one side, here above it. This line gets two of the four wrong (ringed)."}
+      - {line: [0.5, 0.5, 90], wrong: [[0, 1], [1, 1]], say: "Turn it around the middle, now saying on to its right, and it still gets two wrong: each side holds one filled point and one hollow."}
+      - {line: [0.25, 0.25, 225], wrong: [[1, 1]], say: "Shift it too, and the best it can do is three of four: the filled points sit on one diagonal and the hollow ones on the other, so no straight line can split them."}
+      - {keep: {from: [-0.35, 0.85], to: [0.85, -0.35], label: Hidden 1, dx: 3, dy: 8}, say: "A hidden layer draws more lines. One hidden unit keeps this one: it is on unless both inputs are off (OR)."}
+      - {keep: {from: [0.15, 1.35], to: [1.35, 0.15], label: Hidden 2}, say: "A second hidden unit draws another: on unless both inputs are on (NAND)."}
+      - {band: [[-0.35, 0.85], [0.85, -0.35], [1.35, -0.35], [1.35, 0.15], [0.15, 1.35], [-0.35, 1.35]], say: "The output unit is on only where both hidden units are: the band between their lines (shaded), which holds exactly the two filled points."}
+
+  cosine_angle:   # a vector as an arrow, and a second one turning around it
+    plane:
+      alt: "Two arrows from the origin, and the cosine of the angle between them"
+      range: [-1.25, 1.25]
+      axes: []
+      cross: true
+      vectors: [{to: [0.94, 0.34]}]   # 20 degrees, length 1
+      arrow: {angle: 60, length: 0.75}   # the second vector, where it starts
+      arc: {from: 20, to: 60, r: 0.42, label: "40°"}   # at rest: the angle between them
+      rest_note: "cos 40° = 0.77"
+    flow:
+      - {say: "A vector is a list of numbers, here two: 0.94 and 0.34. Drawn from the origin, it is an arrow, with a direction and a length."}
+      - {arrow: 60, note: "cos = 0.77", say: "A second vector (blue). Cosine similarity is the cosine of the angle between them: 0.77 here, as they point roughly the same way."}
+      - {arrow: 110, note: "cos = 0", say: "At right angles it is 0: the two have nothing in common."}
+      - {arrow: 200, note: "cos = −1", say: "Pointing opposite ways, it is −1."}
+      - {arrow: 20, note: "cos = 1", say: "The same direction gives 1, though the blue one is shorter: only direction counts, which is why it is the usual way to compare embeddings."}
+
+  kmeans_rounds:   # k-means: points join the nearest center, centers move to their points' middle
+    plane:
+      alt: "Nine points in three clusters, told apart by shape, each with its center"
+      range: [-0.02, 1.02]
+      axes: []
+      bounds: true   # the dashed lines between the centers' territories, redrawn as they move
+      points:   # each point, then the cluster it ends in
+        - [0.15, 0.2, 0]
+        - [0.28, 0.08, 0]
+        - [0.32, 0.3, 0]
+        - [0.18, 0.82, 1]
+        - [0.36, 0.92, 1]
+        - [0.42, 0.7, 1]
+        - [0.8, 0.5, 2]
+        - [0.92, 0.32, 2]
+        - [0.74, 0.22, 2]
+      centers: [[0.25, 0.193], [0.32, 0.813], [0.82, 0.347]]   # where they end: each cluster's middle
+    flow:
+      - {paint: [-1, -1, -1, -1, -1, -1, -1, -1, -1], centers: [[0.12, 0.55], [0.55, 0.62], [0.62, 0.12]], say: "Points with no labels. To sort them into three clusters, k-means starts with three centers (the large green shapes) placed at random."}
+      - {paint: [0, 2, 0, 0, 1, 1, 1, 2, 2], say: "Each point joins its nearest center, taking its shape."}
+      - {centers: [[0.217, 0.44], [0.527, 0.707], [0.647, 0.207]], say: "Each center moves to the middle of its points."}
+      - {paint: [0, 0, 0, 1, 1, 1, 2, 2, 2], say: "Each point joins its nearest center again, and three change sides."}
+      - {centers: [[0.25, 0.193], [0.32, 0.813], [0.82, 0.347]], say: "The centers move again. Another round would change nothing, so it stops: three clusters, found without any labels."}
+
+
+  relu_curve:   # ReLU's output for a sum moving from negative to positive
+    chart:
+      alt: "The ReLU function: flat at zero for negative sums, then rising in a straight line"
+      x: [-2, 2]
+      y: [-0.6, 2.4]   # room above the highest dot for the readout
+      axes: [Weighted sum, Output]
+      curves: [{fn: relu}]
+      dot: {curve: 0}
+    flow:
+      - {dot: -1.6, note: "−1.6 → 0", say: "ReLU takes a unit's weighted sum (along the bottom) and gives its output (up the side). A negative sum gives 0."}
+      - {dot: -0.4, note: "−0.4 → 0", say: "Any negative sum, large or small, gives 0: the unit is silent."}
+      - {dot: 0.8, note: "0.8 → 0.8", say: "A positive sum passes through unchanged."}
+      - {dot: 1.8, note: "1.8 → 1.8", say: "So the output rises in a straight line. The bend at 0 is all the nonlinearity there is, yet enough of these units, stacked, can shape almost any function."}
+
+  gauss_bump:   # an RBF unit's response, and a wider one
+    chart:
+      alt: "A bell-shaped curve peaking at its center, and a wider one"
+      x: [-2.2, 2.2]
+      y: [0, 1.15]
+      axes: [Input, Output]
+      note_at: [2.1, 1.0]   # top right, clear of the guides
+      curves: [{fn: gauss, c: 0, w: 0.5}, {fn: gauss, c: 0, w: 1.0, hue: blue, from: 3, rest: false}]
+      dot: {curve: 0}
+    flow:
+      - {dot: 0, note: "1.00", say: "A Gaussian bump has a center. An input right at it gives 1, the most it can."}
+      - {dot: 0.6, note: "0.49", say: "Farther away, the output falls off smoothly..."}
+      - {dot: 1.6, note: "0.01", say: "...to almost 0. An RBF network's units are bumps like this, each answering only to inputs near its center."}
+      - {say: "Its width sets how near: a wider bump (blue) answers across a wider range."}
+
+  spline_pieces:   # a cubic B-spline: its values, its pieces, an input read off it, one value changed
+    chart:
+      alt: "A smooth curve made of pieces, shaped by evenly spaced values"
+      x: [-0.06, 1.06]
+      y: [-0.06, 1.0]
+      axes: [Input, Output]
+      zero: false
+      curves:
+        - {fn: bspline, domain: [0, 1], values: [0.3, 0.5, 0.75, 0.55, 0.35, 0.5, 0.8, 0.7, 0.45, 0.55, 0.65], pieces: true, steps: [1, 2]}
+        - {fn: bspline, domain: [0, 1], values: [0.3, 0.5, 0.75, 0.55, 0.35, 0.5, 0.8, 0.7, 0.45, 0.55, 0.65], faint: true, steps: [3], rest: false}   # where it was
+        - {fn: bspline, domain: [0, 1], values: [0.3, 0.5, 0.75, 0.55, 0.35, 0.05, 0.8, 0.7, 0.45, 0.55, 0.65], hue: blue, steps: [3], rest: false}   # where it moves
+      controls: {values: [0.3, 0.5, 0.75, 0.55, 0.35, 0.5, 0.8, 0.7, 0.45, 0.55, 0.65]}
+      dot: {curve: 0, steps: [2]}
+    flow:
+      - {say: "A spline is shaped by a few values (squares), spaced evenly along the input."}
+      - {say: "The curve is made of short pieces (alternately black and gray), each a smooth blend of the few values nearest it, joined so there are no corners."}
+      - {dot: 0.3, say: "An input (yellow) reads its output (red) off the curve, as each KAN edge does with its own spline."}
+      - {controls: [0.3, 0.5, 0.75, 0.55, 0.35, 0.05, 0.8, 0.7, 0.45, 0.55, 0.65], say: "Change one value and only the nearby part of the curve moves (blue); the rest stays where it was. In KAN, values like these are what each edge learns."}
+
+  quantize_wave:   # a wave sampled, then each sample rounded to one of 8 levels
+    chart:
+      alt: "A wave, its samples rounded to eight levels, and the staircase they make"
+      x: [0, 1]
+      y: [-1.1, 1.1]
+      axes: [Time, Value]
+      zero: false
+      curves: [{fn: sine, a: 0.85, f: 1, p: 0.05, faint: true}]
+      samples: {n: 12, from: 1}
+      levels: {n: 8, range: [-1, 1], from: 2}
+      stair: {from: 3}
+    flow:
+      - {say: "A smooth signal, such as a sound wave."}
+      - {say: "Sampled at regular times: a list of numbers, each as precise as you like."}
+      - {snap: true, say: "Quantized: each sample is rounded to the nearest of a few allowed levels (dashed), here 8."}
+      - {snap: true, say: "The result is a staircase of allowed values, close to the wave. WaveNet uses 256 levels, so it can predict each sample as one choice among 256, like a token."}
+
+  softmax_bars:   # four scores, exponentiated, then divided by their total
+    bars:
+      alt: "Four scores turned into four probabilities that add up to 1"
+      names: [Cat, Dog, Fox, Owl]
+      inputs: {label: Scores, arrow: softmax}   # the raw scores, small at the left, throughout
+    flow:
+      - {values: [2.0, 1.0, -0.5, 0.2], scale: 30, say: "Four raw scores, such as a classifier's outputs for four classes. They can be any size, even negative."}
+      - {values: [7.39, 2.72, 0.61, 1.22], scale: 12, say: "Each is exponentiated (raised as a power of e): now all are positive, and the largest pulls further ahead."}
+      - {values: [0.62, 0.23, 0.05, 0.10], scale: 140, say: "Each is divided by their total, so they add up to 1: a probability for each class. The top score gets the most, but none gets nothing."}
+
+# The glossary: a dialog of its own, opened by the book button. Each entry: a term, a few
+# sentences, the panels that use it, and optionally a figure (above) that steps through it
+# with `labels` for its rows. `match` lists the forms that link a panel's text to the entry
+# (the earliest use in each panel; the term itself if not given); `link: false` never links it,
+# and `link_in` links it only in those panels.
+# `used_in_text` replaces the list for a term nearly every panel uses; an `objective` entry
+# defines that objective tag (the panels' tags link to it) and lists the panels trained with it.
+# `group` places it in the index (basics, operations, objectives, training, rl, models, tasks,
+# scale); `sources` names the works it comes from, shown under it: a cite one of the panels
+# lists links to that panel; any other gives its title and url, as a panel's papers do.
+glossary:
+  # ---- basics
+  - term: Activation
+    group: basics
+    match: [activations, activation, activity]
+    used_in_text: Every network here.
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      A unit's output value for a given input: its weighted sum after the activation function. The
+      activations of a layer together are its representation of the input.
+  - term: Activation function
+    group: basics
+    match: [activation function, activation functions, nonlinearity, nonlinear function]
+    used_in_text: Nearly every network here; KAN learns its functions instead of fixing them.
+    sources:
+      - {cite: "Nair & Hinton 2010", title: "Rectified linear units improve restricted Boltzmann machines", url: "https://icml.cc/Conferences/2010/papers/432.pdf"}
+      - {cite: "Glorot, Bordes & Bengio 2011", title: "Deep sparse rectifier neural networks", url: "https://proceedings.mlr.press/v15/glorot11a.html"}
+    text: >-
+      The function a unit applies to its weighted sum, such as ReLU (keep positive values, zero
+      out the rest) or a sigmoid (squash any number into 0 to 1). Without one, any stack of layers
+      would collapse into a single linear map, however deep. KAN learns its functions instead of
+      fixing them.
+  - term: Bias
+    group: basics
+    match: [bias, biases]
+    used_in_text: Nearly every network here.
+    sources: [Rosenblatt 1958]
+    text: >-
+      A number a unit adds to its weighted sum, learned like a weight. It sets how easily the unit
+      responds, so it can fire even when its inputs are all zero.
+  - term: Class
+    group: basics
+    match: [class, classes, classifier, classifiers, classification, classify]
+    used_in: [perceptron, mlp, cnn, resnet, vit, capsnet, clip, bert]
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      One of the categories a classifier sorts inputs into, such as cat or dog, or the digits 0 to
+      9. A classifier usually gives one output per class, turned into probabilities by a softmax.
+  - term: Deep learning
+    group: basics
+    match: [deep learning, deep network, deep networks]
+    used_in_text: "Nearly every network here; the perceptron, the Hopfield network, and the Kohonen map are shallow."
+    sources:
+      - {cite: "LeCun, Bengio & Hinton 2015", title: "Deep learning", url: "https://doi.org/10.1038/nature14539"}
+    text: >-
+      Machine learning with networks of many layers, each finding features built from those of the
+      layer below. It took off in the late 2000s and early 2010s, once more data, faster hardware,
+      and better training methods made deep networks practical; most networks here from the DBN on
+      are deep.
+  - term: Dense and sparse
+    group: basics
+    match: [fully connected layers, fully connected layer, dense layers, dense layer, fully connected, dense, sparse, sparsity]
+    used_in: [mlp, sparse_ae, moe, cnn, resnet]
+    sources: [Ranzato et al. 2006, Shazeer et al. 2017]
+    text: >-
+      A dense (fully connected) layer links every unit to every unit of the layer before. Sparse
+      means few: a sparse code has only a few units active at once, as in a sparse autoencoder,
+      and a sparse mixture of experts runs only a few experts per token.
+  - term: Embedding
+    group: basics
+    match: [embedding, embeddings]
+    used_in: [transformer, clip, siamese, gpt, bert, vit, diffusion_llm]
+    sources:
+      - {cite: "Bengio et al. 2003", title: "A neural probabilistic language model", url: "https://www.jmlr.org/papers/v3/bengio03a.html"}
+      - {cite: "Mikolov et al. 2013", title: "Efficient estimation of word representations in vector space", url: "https://arxiv.org/abs/1301.3781"}
+    text: >-
+      A learned vector that stands for an item, such as a token, an image, or a sentence. Training
+      places similar items near each other, so distance in the space means something.
+  - term: Feature
+    group: basics
+    match: [feature, features]
+    used_in: [cnn, mlp, sparse_ae, dbn, capsnet]
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      A property of the input that a unit responds to, such as an edge, a texture, or a word's
+      tense. Early layers find simple features and later ones combine them; a convolution's
+      output, one feature measured at every position, is a feature map.
+  - term: Hidden layer
+    group: basics
+    match: [hidden layer, hidden layers, hidden unit, hidden units]
+    used_in: [mlp, autoencoder, rbm, dbn, rbf, sparse_ae, boltzmann]
+    sources: ["Rumelhart, Hinton & Williams 1986"]
+    text: >-
+      A layer between the input and the output, whose values no one sets or reads directly. Hidden
+      layers let a network build its own features, which is what lets it learn more than a
+      straight-line boundary.
+  - term: Input and output
+    group: basics
+    match: [inputs, input, outputs, output]
+    link: false
+    used_in_text: Every network here.
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      The input is the data a network is given, such as an image's pixels or a sentence's tokens;
+      the output is what it produces, such as a label, the next token, or an image. The guide
+      marks them with stems: below an input, above an output.
+  - term: Layer
+    group: basics
+    figure: layer_rows
+    labels: [Input layer, Hidden layer, Hidden layer, Output layer]
+    match: [layer, layers]
+    used_in_text: Every network here.
+    sources: ["Rumelhart, Hinton & Williams 1986"]
+    text: >-
+      A row of units that read the same inputs and work side by side. A network's depth is its
+      number of layers; in the guide each row of cells is one.
+  - term: Link
+    group: basics
+    match: [link, links, connection, connections]
+    used_in_text: Every network here.
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      A line between two cells in the guide's diagrams. Its style says what it carries: a plain
+      line a learned weight, dashed a weight set by similarity, dotted a gate, an arrow data
+      passed on, a wavy line a learned function. The key lists them.
+  - term: Parameters
+    group: basics
+    match: [active parameters, parameters]
+    used_in_text: Every network here.
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+      - "Shazeer et al. 2017"
+    text: >-
+      A network's learned numbers: its weights and biases. A mixture of experts can have many
+      parameters but use only a few experts per token, so its active parameters, the ones each
+      token runs through, are far fewer.
+  - term: Patch
+    group: basics
+    match: [patches, patch]
+    used_in: [vit, clip]
+    sources: [Dosovitskiy et al. 2020]
+    text: >-
+      One of the small squares an image is cut into, flattened into a vector and treated as a
+      token. ViT reads a 224-by-224 image as 196 patches of 16 by 16 pixels.
+  - term: ReLU
+    group: basics
+    figure: relu_curve
+    match: [ReLU, ReLUs, rectified linear unit, rectified linear units]
+    used_in: [mlp, cnn, resnet, dbn]
+    sources:
+      - {cite: "Nair & Hinton 2010", title: "Rectified linear units improve restricted Boltzmann machines", url: "https://icml.cc/Conferences/2010/papers/432.pdf"}
+      - {cite: "Glorot, Bordes & Bengio 2011", title: "Deep sparse rectifier neural networks", url: "https://proceedings.mlr.press/v15/glorot11a.html"}
+    text: >-
+      Rectified linear unit: the activation function that passes a positive sum unchanged and
+      turns a negative one to zero. Cheap, and easy to train through many layers, it became the
+      default in deep networks in the early 2010s.
+  - term: Softmax
+    group: basics
+    figure: softmax_bars
+    match: [softmax]
+    used_in: [transformer, gpt, moe, bert, vit, clip, modern_hopfield, wavenet, rnn_attention, diffusion_llm, mamba_hybrid]
+    sources:
+      - {cite: "Bridle 1989", title: "Training stochastic model recognition algorithms as networks can lead to maximum mutual information estimation of parameters", url: "https://proceedings.neurips.cc/paper_files/paper/1989/hash/0336dcbab05b9d5ad24f4333c7658a0e-Abstract.html"}
+    text: >-
+      A function that turns a list of scores into weights that are positive and add up to 1,
+      giving the largest scores most of the weight. Attention uses it to weigh positions, a
+      language model to turn scores into the next token's probabilities.
+  - term: Target
+    group: basics
+    match: [target, targets]
+    used_in: [mlp, flow_matching, gpt, bert, autoencoder, siamese]
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      The output training wants for an input: the right label, the actual next token, or the
+      direction a flow should move. The loss measures how far the output is from it.
+  - term: Token
+    group: basics
+    match: [token, tokens]
+    used_in: [transformer, gpt, bert, vit, clip, diffusion_llm, linear_attention, mamba, mamba_hybrid, moe]
+    sources:
+      - {cite: "Sennrich, Haddow & Birch 2016", title: "Neural machine translation of rare words with subword units", url: "https://aclanthology.org/P16-1162/"}
+    text: >-
+      One item of a sequence as a model reads it: a word or part of a word, an image patch, a
+      sound sample. Each becomes a vector before the network sees it.
+  - term: Unit
+    group: basics
+    match: [unit, units, neuron, neurons]
+    used_in_text: Every network here.
+    sources:
+      - {cite: "McCulloch & Pitts 1943", title: "A logical calculus of the ideas immanent in nervous activity", url: "https://doi.org/10.1007/BF02478259"}
+      - "Rosenblatt 1958"
+    text: >-
+      The basic element of a network, also called a neuron: it multiplies each input by a weight,
+      adds them up with a bias, and passes the sum through an activation function. The guide draws
+      one as a circle.
+  - term: Vector
+    group: basics
+    figure: cosine_angle
+    match: [vector, vectors]
+    used_in_text: Every network here.
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      An ordered list of numbers, such as a unit's weights or a token's embedding: a point, or a
+      direction, in a space with one axis per number. Most of what flows through a network is
+      vectors.
+  - term: Weight
+    group: basics
+    match: [weight, weights]
+    used_in_text: Every network here.
+    sources: [Rosenblatt 1958]
+    text: >-
+      A number on a connection that scales whatever passes along it. Training adjusts the weights;
+      they are what a network learns. Most lines in the guide stand for one.
+  - term: XOR
+    group: basics
+    figure: xor_plane
+    match: [XOR]
+    used_in: [perceptron, mlp]
+    sources:
+      - {cite: "Minsky & Papert 1969", title: "Perceptrons: an introduction to computational geometry", url: "https://mitpressbookstore.mit.edu/book/9780262534772"}
+      - "Rumelhart, Hinton & Williams 1986"
+    text: >-
+      Exclusive or: true when exactly one of two inputs is on. Its true and false cases can't be
+      split by one straight line, so a perceptron can't learn it, while a network with a hidden
+      layer can; Minsky and Papert's 1969 analysis of such limits is often blamed for slowing the
+      field for years.
+  # ---- operations
+  - term: Associative memory
+    group: operations
+    match: [associative memories, associative memory, capacity]
+    link_in: [hopfield, modern_hopfield, primer]
+    used_in: [hopfield, modern_hopfield]
+    sources: [Hopfield 1982, Ramsauer et al. 2020]
+    text: >-
+      A memory recalled by content rather than address: given part of a stored pattern, or a noisy
+      copy, it returns the whole. Its capacity is how many patterns it can store before recall
+      breaks down.
+  - term: Attention
+    group: operations
+    figure: attention_read
+    labels: [Tokens, Attention, New vector]
+    match: [attention, self-attention, cross-attention, attends]
+    used_in: [transformer, bert, gpt, vit, clip, rnn_attention, diffusion_llm, mamba_hybrid, modern_hopfield, ntm, linear_attention]
+    sources: ["Bahdanau, Cho & Bengio 2014", Vaswani et al. 2017]
+    text: >-
+      A way for each position in a sequence to gather what it needs from the others. Each position
+      asks a question, its query, of every position it can see; each answers with a key, and how
+      well the two match decides how much of that position's value it takes. So the weights are
+      set by the input itself, unlike a layer's learned weights, which is why the guide draws them
+      dashed. Self-attention reads the same sequence; cross-attention reads another, such as the
+      source sentence in translation. A layer runs several heads at once, each matching on
+      something different.
+  - term: Bidirectional
+    group: operations
+    figure: bidir_rows
+    labels: [Inputs, Forward →, ← Backward, Outputs]
+    match: [bidirectional, both directions]
+    link_in: [birnn, bert, transformer, rnn_attention, vit, clip, diffusion_llm, primer]
+    used_in: [birnn, bert, transformer, rnn_attention, vit, clip, diffusion_llm]
+    sources: ["Schuster & Paliwal 1997", Devlin et al. 2018]
+    text: >-
+      Reading a sequence both ways, so each position sees what comes after it as well as before.
+      Encoders that read a whole input at once are bidirectional; a model that generates one token
+      at a time can't be, since what comes after doesn't exist yet.
+  - term: Block
+    group: operations
+    match: [block, blocks]
+    used_in: [transformer, gpt, bert, resnet, mamba, moe, mamba_hybrid, vit, linear_attention]
+    sources: [He et al. 2015, Vaswani et al. 2017]
+    text: >-
+      A small group of layers repeated to build a deep network, such as a Transformer's attention
+      and feed-forward layers with their residual connections. Stacking the same block many times
+      is how most deep networks are made; the primer opens one.
+  - term: Bottleneck
+    group: operations
+    match: [bottlenecks, bottleneck]
+    used_in: [unet, autoencoder, vae]
+    sources: ["Ronneberger, Fischer & Brox 2015", "Rumelhart, Hinton & Williams 1986"]
+    text: >-
+      The narrowest layer of a network that squeezes its input and widens it again, which forces
+      it to keep only what matters. In an autoencoder the bottleneck is the code; in U-Net it is
+      the coarsest scale, with skip connections carrying the fine detail around it.
+  - term: Capsule
+    group: operations
+    match: [capsule, capsules]
+    used_in: [capsnet]
+    sources: ["Sabour, Frosst & Hinton 2017"]
+    text: >-
+      A group of units whose output is a vector: its length says how likely an entity is present,
+      and its direction describes it, such as its pose. Capsules pass their outputs on by routing
+      by agreement.
+  - term: Causal mask
+    group: operations
+    figure: causal_steps
+    labels: [Tokens, Attention]
+    match: [causal mask, causal]
+    used_in: [gpt, transformer, linear_attention, wavenet]
+    sources: [Vaswani et al. 2017]
+    text: >-
+      In a model that generates a sequence, each position may read only the ones before it, so in
+      training it cannot see what it is learning to predict. The guide draws it as lines that only
+      reach back, never forward. WaveNet gets the same effect from causal convolutions, which only
+      look back.
+  - term: Channel
+    group: operations
+    match: [channels, channel]
+    used_in: [cnn, resnet, unet, wavenet, capsnet]
+    sources: [LeCun et al. 1989]
+    text: >-
+      One of the stacked maps at each position of a convolutional layer, such as red, green, and
+      blue in an image, or one filter's output deeper in. A filter reads every channel in its
+      window, and each filter makes one new channel.
+  - term: Clamping
+    group: operations
+    figure: clamp_ring
+    labels: ["", "", "", ""]
+    match: [clamped, clamping, clamp, clamps]
+    used_in: [boltzmann, rbm, dbn]
+    sources: ["Ackley, Hinton & Sejnowski 1985"]
+    text: >-
+      Holding some units fixed at given values, such as the visible units at a training example,
+      while the rest of the network settles or is sampled around them.
+  - term: Code
+    group: operations
+    match: [code, codes]
+    used_in: [autoencoder, sparse_ae, denoising_ae, vae]
+    sources:
+      - "Rumelhart, Hinton & Williams 1986"
+      - {cite: "Hinton & Salakhutdinov 2006", title: "Reducing the dimensionality of data with neural networks", url: "https://doi.org/10.1126/science.1127647"}
+    text: >-
+      The representation an encoder makes of its input, from which a decoder rebuilds it: usually
+      smaller than the input, or, in a sparse autoencoder, with only a few units active at once.
+  - term: Convolution
+    group: operations
+    figure: convolution_slide
+    labels: [Input, Filter, Feature map]
+    match: [convolution, convolutions, convolutional]
+    used_in: [cnn, resnet, unet, wavenet, capsnet]
+    sources: [Fukushima 1980, LeCun et al. 1989]
+    text: >-
+      A small set of weights, a filter, slid across the input, so one pattern is detected wherever
+      it appears. Each output reads only a few neighbors, which keeps the weights few. Stacked
+      layers see wider and wider regions: in an image, early filters find edges and later ones
+      shapes. WaveNet's dilated convolutions skip inputs, so a few layers reach far back.
+  - term: Cosine similarity
+    group: operations
+    figure: cosine_angle
+    match: [cosine similarity, cosine-similarity]
+    used_in: [siamese, clip]
+    sources: ["Reimers & Gurevych 2019", Radford et al. 2021]
+    text: >-
+      How closely two vectors point the same way, from 1 (same direction) through 0 (unrelated) to
+      −1 (opposite), whatever their lengths: a common score for comparing embeddings.
+  - term: Denoiser
+    group: operations
+    match: [denoisers, denoiser]
+    used_in: [diffusion, denoising_ae, unet]
+    sources: ["Ho, Jain & Abbeel 2020"]
+    text: >-
+      The network a diffusion model trains and runs at every step: given a noisy sample and how
+      noisy it is, it predicts the noise (or the clean data), so a little can be taken away. It is
+      usually a U-Net or a Transformer.
+  - term: Dilation
+    group: operations
+    figure: dilation_tree
+    labels: [Inputs, Spacing 1, Spacing 2, Spacing 4]
+    match: [dilated, dilation, dilations]
+    used_in: [wavenet]
+    sources:
+      - "van den Oord et al. 2016"
+      - {cite: "Yu & Koltun 2015", title: "Multi-scale context aggregation by dilated convolutions", url: "https://arxiv.org/abs/1511.07122"}
+    text: >-
+      Spacing out the inputs a convolution reads, skipping some between each. Doubling the spacing
+      at each layer lets the reach grow exponentially with depth, so a few layers can see
+      thousands of steps back.
+  - term: Edge
+    group: operations
+    figure: graph_edges
+    labels: ["", "", ""]
+    match: [edge, edges]
+    used_in: [gnn, kan]
+    sources: [Scarselli et al. 2009, Liu et al. 2024]
+    text: >-
+      A connection between two nodes of a graph. In a graph network the edges are the input's
+      relations, such as bonds between atoms; in KAN each edge carries its own learned function
+      instead of a single weight.
+  - term: Encoder and decoder
+    group: operations
+    figure: encdec_squeeze
+    labels: [Input, Code, Output]
+    match: [encoder, encoders, decoder, decoders]
+    used_in: [autoencoder, vae, transformer, bert, gpt, unet, rnn_attention, sparse_ae, denoising_ae, vit, clip, siamese]
+    sources: ["Sutskever, Vinyals & Le 2014", Cho et al. 2014]
+    text: >-
+      An encoder turns an input into an internal representation; a decoder turns a representation
+      into an output. Autoencoders, translation models, and U-Nets pair the two; BERT is an
+      encoder alone and GPT a decoder alone.
+  - term: Energy
+    group: operations
+    match: [energy]
+    used_in: [hopfield, boltzmann, rbm, modern_hopfield, dbn]
+    sources: [Hopfield 1982, "Ackley, Hinton & Sejnowski 1985"]
+    text: >-
+      A single number a Hopfield network or Boltzmann machine gives each state of its units, low
+      for states it has learned. Updates tend to lower it, so the network settles into its stored
+      patterns.
+  - term: Equilibrium
+    group: operations
+    match: [equilibrium, thermal equilibrium]
+    used_in: [boltzmann, rbm, dbn, diffusion]
+    sources: ["Ackley, Hinton & Sejnowski 1985"]
+    text: >-
+      The state a network of random units settles into after enough updates, where each pattern
+      turns up with a fixed probability that depends on its energy. Boltzmann machines learn by
+      comparing equilibrium with the data clamped and with it free.
+  - term: Feed-forward layer
+    group: operations
+    match: [feed-forward layers, feed-forward layer, feed-forward block, feed-forward]
+    used_in: [transformer, bert, gpt, vit, clip, rnn_attention, diffusion_llm, mamba_hybrid, moe]
+    sources: [Vaswani et al. 2017]
+    text: >-
+      The small MLP in each Transformer block, applied to every position on its own after
+      attention: it widens each vector, applies an activation function, and narrows it back. It
+      holds most of a Transformer's parameters, and a mixture of experts replaces it with many.
+  - term: Filter
+    group: operations
+    match: [filter, filters]
+    used_in: [cnn, resnet, unet, wavenet]
+    sources: [LeCun et al. 1989]
+    text: >-
+      A convolution's small set of weights, slid across the input to detect one pattern wherever
+      it appears. A layer has many filters, each making its own feature map; also called a kernel.
+  - term: Gate
+    group: operations
+    figure: gate_step
+    labels: [Input, State]
+    match: [gate, gates, gated, gating]
+    used_in: [lstm, gru, mamba, wavenet, linear_attention, mamba_hybrid]
+    sources: ["Hochreiter & Schmidhuber 1997"]
+    text: >-
+      A number between 0 and 1, computed from the input, that scales a signal: near 0 shuts it
+      out, near 1 lets it through. LSTMs and GRUs use gates to decide what their state keeps,
+      forgets, and shows; Mamba's selective state works the same way. The guide draws a gate as a
+      dotted line ending at a dot on the arrow it acts on.
+  - term: Gaussian bump
+    group: operations
+    figure: gauss_bump
+    match: [Gaussian bumps, Gaussian bump, Gaussian]
+    used_in: [rbf]
+    sources: ["Broomhead & Lowe 1988"]
+    text: >-
+      A bell-shaped response: largest at a center point and falling off smoothly with distance
+      from it. Each unit of a radial basis network responds this way to inputs near its center.
+  - term: Graph
+    group: operations
+    match: [graph, graphs]
+    used_in: [gnn]
+    sources: [Scarselli et al. 2009]
+    text: >-
+      A set of nodes joined by edges, such as atoms and bonds, people and friendships, or roads
+      and junctions. A graph network works on it directly, so it handles any number of nodes in
+      any arrangement.
+  - term: Head
+    group: operations
+    match: [heads, head]
+    used_in: [cnn, resnet, policy_gradient, transformer, bert, gpt, vit]
+    sources: [Vaswani et al. 2017]
+    text: >-
+      A small output layer on a shared network, turning its features into one answer: a class, the
+      probability of each action, a value. In attention, a head is one of several attention steps
+      run side by side, each with its own queries, keys, and values, so each can look for
+      something different.
+  - term: Invertible
+    group: operations
+    match: [invertible, invertibility]
+    used_in: [normalizing_flow]
+    sources: ["Dinh, Krueger & Bengio 2014"]
+    text: >-
+      Able to be run backward exactly: every output comes from one input, which can be recovered.
+      A normalizing flow is built from invertible layers chosen so that their effect on
+      probability is cheap to compute, which is what makes its likelihood exact.
+  - term: Kernel
+    group: operations
+    match: [kernels, kernel]
+    used_in: [rbf, cnn]
+    sources:
+      - "Broomhead & Lowe 1988"
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      A function scoring how alike two inputs are, such as a Gaussian bump of the distance between
+      them. Kernel methods such as support vector machines work entirely through such scores; each
+      unit of a radial basis network is one kernel, measured against its center. (A convolution's
+      filter is also called its kernel.)
+  - term: Latent
+    group: operations
+    match: [latent, latents]
+    used_in: [autoencoder, vae, gan, diffusion, normalizing_flow]
+    sources: ["Kingma & Welling 2013"]
+    text: >-
+      Hidden. A latent vector is the compact code a network computes or samples rather than sees:
+      what an autoencoder squeezes its input into, or the space a VAE or GAN draws from to make
+      something new.
+  - term: Masking
+    group: operations
+    match: [masking, mask, masks, masked]
+    used_in: [bert, diffusion_llm, gpt]
+    sources: [Devlin et al. 2018, Vaswani et al. 2017]
+    text: >-
+      Hiding part of what a network may see: tokens swapped for a mask token for it to fill in
+      (BERT, masked diffusion LLMs), or positions attention may not read (a causal mask).
+  - term: Message passing
+    group: operations
+    match: [message passing, messages, message]
+    used_in: [gnn]
+    sources: [Scarselli et al. 2009, "Kipf & Welling 2016"]
+    text: >-
+      How a graph network updates each node: every neighbor sends it a message computed from its
+      own state, and the node combines them with its state. Repeating it lets information travel
+      one edge farther each round.
+  - term: Mixture of experts
+    group: operations
+    match: [mixture of experts, mixture-of-experts, experts, expert]
+    used_in: [moe]
+    sources:
+      - {cite: "Jacobs et al. 1991", title: "Adaptive mixtures of local experts", url: "https://doi.org/10.1162/neco.1991.3.1.79"}
+      - "Shazeer et al. 2017"
+    text: >-
+      A layer made of many expert networks, of which a router picks a few for each token, so the
+      model holds far more parameters than any one token runs through. It can grow without costing
+      proportionally more to run, and many of today's largest language models use it. The Routing
+      entry steps through it.
+  - term: Node
+    group: operations
+    figure: graph_parts
+    labels: ["", "", ""]
+    match: [node, nodes]
+    link_in: [gnn, kan]
+    used_in: [gnn, kan]
+    sources: [Scarselli et al. 2009]
+    text: >-
+      A point in a graph, such as an atom or a person, joined to others by edges. In a graph
+      network each node holds a vector, updated from its neighbors' messages; in KAN a node just
+      adds up what its edges bring.
+  - term: Normalization
+    group: operations
+    match: [normalization, normalizes, normalized, normalize]
+    used_in_text: "Most deep networks since 2015, and every Transformer block."
+    sources:
+      - {cite: "Ioffe & Szegedy 2015", title: "Batch normalization: accelerating deep network training by reducing internal covariate shift", url: "https://arxiv.org/abs/1502.03167"}
+      - {cite: "Ba, Kiros & Hinton 2016", title: "Layer normalization", url: "https://arxiv.org/abs/1607.06450"}
+    text: >-
+      Rescaling a layer's numbers to a standard spread, so signals stay in a steady range as they
+      pass through many layers and training stays stable. Layer normalization works on each
+      token's vector, batch normalization on each feature across a batch.
+  - term: Pooling
+    group: operations
+    figure: pooling_max
+    labels: [Feature map, Pooled]
+    match: [pooling]
+    used_in: [cnn]
+    sources:
+      - "Fukushima 1980"
+      - {cite: "Riesenhuber & Poggio 1999", title: "Hierarchical models of object recognition in cortex", url: "https://doi.org/10.1038/14819"}
+    text: >-
+      Shrinking a feature map by summarizing each small patch, usually by its largest value. It
+      keeps whether a pattern appeared while forgetting exactly where, and lets later layers see
+      more of the input for the same cost.
+  - term: Position
+    group: operations
+    match: [positional encodings, positional encoding, positional embeddings, positions, position]
+    link_in: [transformer, bert, gpt, vit, primer]
+    used_in: [transformer, bert, gpt, vit, clip, diffusion_llm]
+    sources:
+      - "Vaswani et al. 2017"
+      - {cite: "Su et al. 2021", title: "RoFormer: Enhanced Transformer with rotary position embedding", url: "https://arxiv.org/abs/2104.09864"}
+    text: >-
+      A slot in a sequence: one token, one time step, or one patch. Attention on its own ignores
+      order, so Transformers add positional encodings: the original added a fixed pattern of waves
+      to each token's vector, BERT and ViT learn one per position, and most recent language models
+      rotate queries and keys by their position instead (RoPE).
+  - term: Prior
+    group: operations
+    match: [priors, prior]
+    used_in: [vae, gan, normalizing_flow, diffusion]
+    sources: ["Kingma & Welling 2013"]
+    text: >-
+      The distribution a generative model draws its codes or noise from before generating, usually
+      a plain Gaussian. A VAE is trained to keep its codes close to it, so any code drawn from the
+      prior decodes to something plausible.
+  - term: "Query, key, and value"
+    group: operations
+    match: ["query, key, and value", queries, query, keys and values, key and value]
+    used_in: [transformer, gpt, bert, vit, modern_hopfield, linear_attention, clip, diffusion_llm, mamba_hybrid]
+    sources: [Vaswani et al. 2017]
+    text: >-
+      The three vectors attention makes from each position, each by its own learned weights. A
+      position's query is compared with every key; the better the match, the more of that
+      position's value it takes, like a lookup that returns a blend instead of one entry.
+  - term: Read and write heads
+    group: operations
+    match: [read and write heads, read heads, write heads]
+    used_in: [ntm]
+    sources: ["Graves, Wayne & Danihelka 2014"]
+    text: >-
+      The parts of a memory-augmented network that read from and write to its memory. Each
+      produces soft weights over the memory's rows, by content or by location, so reading and
+      writing are differentiable and can be trained by backpropagation.
+  - term: Recurrence
+    group: operations
+    figure: recurrence_steps
+    labels: [Inputs, State, Outputs]
+    match: [recurrence, recurrent, hidden state]
+    used_in: [rnn, lstm, gru, birnn, rnn_attention, ntm, linear_attention, mamba, mamba_hybrid]
+    sources: [Jordan 1986, Elman 1990]
+    text: >-
+      Running the same network once per step of a sequence, passing a state from each step to the
+      next: a running summary of everything so far. The state is what lets the network remember,
+      and squeezing all of history into it is what makes long memories hard.
+  - term: Reparameterization trick
+    group: operations
+    match: [reparameterization trick, reparameterization]
+    used_in: [vae]
+    sources: ["Kingma & Welling 2013"]
+    text: >-
+      Writing a random sample as the network's outputs plus independent noise, a mean plus a
+      spread times a standard random number, so the error can be passed back through the sampling
+      step. It is what lets a VAE train by backpropagation.
+  - term: Residual connection
+    group: operations
+    figure: residual_add
+    labels: [Input, Layer, Sum]
+    match: [residual connection, residual connections, skip connection, skip connections, skip path, skip paths]
+    used_in: [resnet, transformer, bert, gpt, vit, unet, clip, diffusion_llm, linear_attention, mamba, mamba_hybrid, moe]
+    sources: [He et al. 2015]
+    text: >-
+      A path that carries a layer's input around it and adds it to the layer's output, so the
+      layer only has to learn a change. It lets very deep networks train, because the signal, and
+      in training its gradient, can pass straight through. Also called a skip connection; U-Net's
+      skip connections copy instead of adding.
+  - term: Residual stream
+    group: operations
+    match: [residual stream, residual streams]
+    used_in: [resnet, transformer, gpt, bert, vit, clip, diffusion_llm, linear_attention, mamba, mamba_hybrid, moe]
+    sources: [He et al. 2015, Vaswani et al. 2017]
+    text: >-
+      The running vector that residual connections carry through a deep network: each block reads
+      it and adds its own output back, so the stream builds up every block's contribution.
+  - term: Routing
+    group: operations
+    figure: routing_pick
+    labels: [Tokens, Router, Experts, Outputs]
+    match: [routing, router, routers, routes]
+    used_in: [moe, capsnet]
+    sources: [Shazeer et al. 2017, "Sabour, Frosst & Hinton 2017"]
+    text: >-
+      Sending each input to only some of a network's parts. In a mixture of experts a router
+      scores the experts for each token and picks a few, so the network can be large while each
+      token runs through a small part of it. CapsNet's routing by agreement instead sends each
+      capsule's output to the higher capsules that agree with it.
+  - term: Solver
+    group: operations
+    match: [neural ODEs, neural ODE, solvers, solver, ODEs, ODE]
+    used_in: [flow_matching, diffusion]
+    sources: [Chen et al. 2018, Lipman et al. 2022]
+    text: >-
+      A numerical method that follows a velocity forward in small steps, as for an ordinary
+      differential equation (ODE). Flow-matching and diffusion models sample this way; better
+      solvers take bigger steps with little loss in quality.
+  - term: Spline
+    group: operations
+    figure: spline_pieces
+    match: [spline-based, splines, spline]
+    used_in: [kan]
+    sources: [Liu et al. 2024]
+    text: >-
+      A smooth curve made of short polynomial pieces joined end to end, shaped by a few control
+      values. The original KAN learns one spline per edge; later versions swap in other curves
+      that run faster.
+  - term: State space model
+    group: operations
+    match: [state space model, state space models, state-space model, state-space models, state-space, SSM, SSMs]
+    used_in: [mamba, mamba_hybrid]
+    sources:
+      - {cite: "Gu, Goel & Ré 2021", title: "Efficiently modeling long sequences with structured state spaces", url: "https://arxiv.org/abs/2111.00396"}
+      - "Gu & Dao 2023"
+    text: >-
+      A recurrence built from linear updates of a hidden state, an idea from control theory.
+      Because each update is linear, training can compute a whole sequence in parallel, while
+      generating runs one step at a time with a state of fixed size. Mamba makes the updates
+      depend on the input (selective), so it can choose what to keep.
+  - term: Velocity
+    group: operations
+    match: [velocities, velocity]
+    used_in: [flow_matching]
+    sources: [Lipman et al. 2022]
+    text: >-
+      The direction and speed a point should move at a given moment, as a vector. Flow matching
+      trains its network to output it, and sampling follows it step by step; the guide marks it
+      with an arrow.
+  - term: Window
+    group: operations
+    figure: window_reach
+    labels: [Inputs, Layer 1, Layer 2]
+    match: [sliding window, window, windows]
+    used_in: [cnn, wavenet, unet, rnn_attention]
+    sources: [LeCun et al. 1989]
+    text: >-
+      The few neighboring positions an operation reads at once, such as a convolution's three
+      inputs. Sliding it along the input applies the same operation everywhere; a wider or dilated
+      window reaches farther with no extra weights.
+  # ---- objectives: what training aims at; the panels' tags link here
+  - term: Adversarial training
+    group: objectives
+    match: [adversarial]
+    objective: adversarial
+    sources: [Goodfellow et al. 2014]
+    text: >-
+      Training two networks against each other: a generator makes fakes, and a discriminator tries
+      to tell them from real data. Each improves by beating the other, until the fakes are hard to
+      tell apart.
+  - term: Competitive learning
+    group: objectives
+    match: [competitive learning, competitive]
+    link_in: [som, primer]
+    objective: competitive
+    sources:
+      - "Kohonen 1982"
+      - {cite: "Rumelhart & Zipser 1985", title: "Feature discovery by competitive learning", url: "https://doi.org/10.1207/s15516709cog0901_5"}
+    text: >-
+      Units compete for each input: the one whose weights match it best wins and moves its weights
+      toward it, and in a Kohonen map so do its neighbors on the map. Over many inputs each unit
+      comes to stand for one kind of input.
+  - term: Contrastive learning
+    group: objectives
+    figure: contrastive_pairs
+    labels: [Second pair, First pair]
+    match: [contrastive]
+    link_in: [clip, siamese, primer]
+    objective: contrastive
+    used_in: [clip, siamese]
+    sources: ["Hadsell, Chopra & LeCun 2006", Radford et al. 2021]
+    text: >-
+      Training embeddings by pulling matching pairs together and pushing mismatched ones apart,
+      such as a photo and its caption against the other captions in the batch.
+  - term: Hebbian learning
+    group: objectives
+    match: [Hebbian learning, Hebbian, Hebb]
+    objective: hebbian
+    sources:
+      - {cite: "Hebb 1949", title: "The organization of behavior: a neuropsychological theory", url: "https://www.routledge.com/The-Organization-of-Behavior-A-Neuropsychological-Theory/Hebb/p/book/9780805843002"}
+      - "Hopfield 1982"
+    text: >-
+      Strengthening the weight between two units that are active together, often summed up as
+      cells that fire together wire together. A Hopfield network stores its patterns this way, in
+      one pass, with no error passed back.
+  - term: Likelihood
+    group: objectives
+    match: [likelihood, log-likelihood]
+    objective: likelihood
+    used_in: [normalizing_flow, vae, gpt, diffusion, wavenet]
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+      - "Dinh, Krueger & Bengio 2014"
+    text: >-
+      How probable a model finds some data. Training to raise it teaches the model to assign high
+      probability to real examples; a normalizing flow computes it exactly, a VAE a lower bound on
+      it.
+  - term: Masked-token prediction
+    group: objectives
+    match: [masked-token prediction, masked token, masked tokens]
+    objective: masked token
+    sources: [Devlin et al. 2018]
+    text: >-
+      Training a model to fill in tokens hidden from it (BERT hides 15%), using the tokens on both
+      sides. It suits a model that reads the whole text at once; a masked diffusion LLM generates
+      by repeating it, unmasking a few tokens at a time.
+  - term: Next-token prediction
+    group: objectives
+    match: [next-token prediction, next token, next-token]
+    objective: next token
+    sources:
+      - {cite: "Bengio et al. 2003", title: "A neural probabilistic language model", url: "https://www.jmlr.org/papers/v3/bengio03a.html"}
+      - "Radford et al. 2018"
+    text: >-
+      Training a model to predict each token from the ones before it, so ordinary text supplies
+      its own answers. It is how GPT-style language models learn; to generate, the model predicts
+      a token, adds it to the text, and predicts again.
+  - term: Noise and denoising
+    group: objectives
+    match: [denoising, denoises, denoise, noise, noisy]
+    objective: denoise
+    used_in: [denoising_ae, diffusion, flow_matching, gan, normalizing_flow, vae]
+    sources: [Vincent et al. 2008, "Ho, Jain & Abbeel 2020"]
+    text: >-
+      Noise is random variation, here added on purpose. A denoising model learns to remove it; a
+      diffusion model learns to remove it a little at a time, so it can start from pure noise and
+      end with new data. A GAN's generator turns noise into data in one pass.
+  - term: Reconstruction
+    group: objectives
+    match: [reconstruction, reconstructs, reconstruct]
+    objective: reconstruct
+    used_in: [autoencoder, sparse_ae, denoising_ae, vae, rbm]
+    sources:
+      - "Rumelhart, Hinton & Williams 1986"
+      - {cite: "Hinton & Salakhutdinov 2006", title: "Reducing the dimensionality of data with neural networks", url: "https://doi.org/10.1126/science.1127647"}
+    text: >-
+      Training a network to reproduce its own input, usually through a narrow middle, so it must
+      learn what matters about the data to get it back.
+  - term: Variational bound
+    group: objectives
+    match: [variational bound, variational, evidence lower bound, ELBO]
+    objective: variational
+    sources: ["Kingma & Welling 2013"]
+    text: >-
+      A lower bound on how probable a model with a hidden code finds the data, trained in place of
+      that probability, which can't be computed exactly. A VAE's bound rewards rebuilding the
+      input while keeping its codes close to a simple prior, so a code drawn from the prior
+      decodes to something new. Diffusion models train on a simplified form of the same bound.
+  # ---- training
+  - term: Backpropagation
+    group: training
+    figure: backprop_pass
+    labels: [Input, Hidden, Output]
+    match: [backpropagation, backprop, gradient descent, gradients, gradient]
+    used_in_text: "Nearly every network here; not the Hopfield network, the Boltzmann machines, or the Kohonen map, which learn by local rules."
+    sources: ["Rumelhart, Hinton & Williams 1986"]
+    text: >-
+      How a network finds which way to change each weight. It passes the error back from the
+      output, layer by layer, giving each weight its share of the blame, its gradient; gradient
+      descent then moves every weight a small step the other way. Repeated over many examples,
+      this is what training means for most networks here.
+  - term: Contrastive divergence
+    group: training
+    match: [contrastive divergence]
+    used_in: [rbm, dbn]
+    sources: [Hinton 2002]
+    text: >-
+      A fast way to train an RBM: start Gibbs sampling at the data, run only a step or a few, and
+      nudge the weights toward the data and away from the short run's result. It approximates
+      maximum-likelihood training without waiting for equilibrium. Not related to contrastive
+      learning.
+  - term: Distillation
+    group: training
+    match: [distillation, distilled, distill, distills]
+    used_in: [flow_matching, diffusion]
+    sources:
+      - {cite: "Hinton, Vinyals & Dean 2015", title: "Distilling the knowledge in a neural network", url: "https://arxiv.org/abs/1503.02531"}
+    text: >-
+      Training a model, the student, to reproduce another's outputs, the teacher's: to make a
+      smaller or faster copy. For diffusion and flow models it cuts sampling from many steps to a
+      few.
+  - term: Fine-tuning
+    group: training
+    match: [fine-tuning, fine-tuned, fine-tune, fine-tunes]
+    used_in: [bert, dbn, vit, gpt, policy_gradient]
+    sources: [Devlin et al. 2018, "Hinton, Osindero & Teh 2006"]
+    text: >-
+      Training a pretrained model a little further, on a smaller dataset for a specific task,
+      starting from its learned weights rather than from scratch. It is far cheaper than
+      pretraining and adapts the model's features to the task.
+  - term: Gibbs sampling
+    group: training
+    match: [Gibbs sampling, Gibbs]
+    used_in: [boltzmann, rbm, dbn]
+    sources:
+      - {cite: "Geman & Geman 1984", title: "Stochastic relaxation, Gibbs distributions, and the Bayesian restoration of images", url: "https://doi.org/10.1109/TPAMI.1984.4767596"}
+      - "Ackley, Hinton & Sejnowski 1985"
+    text: >-
+      Sampling from a network of random units by updating some of them, each drawn given the rest,
+      over and over. Run long enough it reaches equilibrium; in an RBM a whole layer can be drawn
+      at once, since its units don't connect to each other.
+  - term: Loss
+    group: training
+    match: [loss, losses]
+    used_in_text: "Nearly every network here; not the Hopfield network or the Kohonen map, which follow update rules instead."
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      A number that measures how far a network's output is from what it should be; training lowers
+      it. Each panel's objective says what its loss rewards.
+  - term: Post-training
+    group: training
+    match: [post-training, post-trained, post-train]
+    used_in: [gpt, policy_gradient]
+    sources: [Ouyang et al. 2022]
+    text: >-
+      The training a pretrained language model gets before release: fine-tuning on examples of
+      good answers, then reinforcement learning, such as RLHF, toward answers people prefer. It
+      turns a text predictor into an assistant.
+  - term: Pre-training
+    group: training
+    match: [pre-training, pretraining, pretrained, pre-trained, pretrains, pretrain]
+    used_in: [dbn, bert, gpt, vit, clip]
+    sources: ["Hinton, Osindero & Teh 2006", Devlin et al. 2018]
+    text: >-
+      Training a model first on a large, general task, such as predicting words across much of the
+      web, so it learns broadly useful features before any specific use. A DBN pretrains one layer
+      at a time; BERT and GPT pretrain on text.
+  - term: Sampling
+    group: training
+    match: [sampling, sampled, samples, sample]
+    used_in: [gpt, diffusion, vae, boltzmann, rbm, dbn, gan, normalizing_flow, wavenet, flow_matching, policy_gradient, diffusion_llm]
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      Drawing an output at random from a model's probabilities instead of always taking the
+      likeliest one, which is how generative models give varied results.
+  - term: Self-supervised learning
+    group: training
+    match: [self-supervised learning, self-supervised]
+    used_in: [bert, gpt, diffusion_llm, denoising_ae, wavenet, diffusion, flow_matching]
+    sources: [Devlin et al. 2018, Radford et al. 2018]
+    text: >-
+      Training on answers the data supplies itself: hide part of the input, or the next word, and
+      ask the network for it. It needs no labels, so it can learn from vast amounts of text and
+      images; it is how today's language models are pretrained.
+  - term: Supervised learning
+    group: training
+    match: [supervised learning, supervised]
+    objective: supervised
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      Training on inputs paired with answers that people provided, such as photos labeled with
+      what they show. The network is corrected toward each answer, its target. Most classifiers
+      here, from the perceptron to ResNet, learn this way.
+  - term: Training and inference
+    group: training
+    match: [inference]
+    used_in_text: Every network here.
+    sources:
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      Training adjusts a model's weights from data; inference runs the finished model on new
+      inputs, with its weights fixed. Training happens once, at great cost; inference happens
+      every time the model is used, so its cost per input matters most once a model is in use.
+  - term: Unsupervised learning
+    group: training
+    match: [unsupervised learning, unsupervised]
+    used_in: [som, rbm, boltzmann, autoencoder, hopfield, sparse_ae, dbn, vae, gan, normalizing_flow]
+    sources:
+      - "Kohonen 1982"
+      - {cite: "Goodfellow, Bengio & Courville 2016", title: "Deep learning (textbook)", url: "https://www.deeplearningbook.org/"}
+    text: >-
+      Training with no answers at all: the network finds structure in the data on its own, such as
+      clusters, compact codes, or the data's overall shape. The Kohonen map, Boltzmann machines,
+      and autoencoders learn this way.
+  - term: Vanishing gradient
+    group: training
+    match: [vanishing gradient, vanishing gradients]
+    used_in: [rnn, lstm, gru, resnet, dbn]
+    sources:
+      - {cite: "Hochreiter 1991", title: "Untersuchungen zu dynamischen neuronalen Netzen (diploma thesis)", url: "https://ml.jku.at/publications/older/3804_1.pdf"}
+      - {cite: "Bengio, Simard & Frasconi 1994", title: "Learning long-term dependencies with gradient descent is difficult", url: "https://doi.org/10.1109/72.279181"}
+    text: >-
+      The error passed back through many layers, or many steps of a recurrence, shrinking a little
+      at each until the earliest weights barely learn. It long made deep and recurrent networks
+      hard to train; LSTM gates, residual connections, ReLU activations, and careful starting
+      weights all answer it.
+  # ---- reinforcement learning
+  - term: Action
+    group: rl
+    match: [action, actions]
+    used_in: [policy_gradient]
+    sources:
+      - {cite: "Sutton & Barto 2018", title: "Reinforcement learning: an introduction (2nd ed.)", url: "http://incompleteideas.net/book/the-book-2nd.html"}
+    text: >-
+      What an agent does at each step, chosen by its policy: push left or right, move a piece,
+      write a token. The environment responds with a new state and a reward.
+  - term: Actor and critic
+    group: rl
+    match: [actor-critic, actor, critic, value]
+    link_in: [policy_gradient]
+    used_in: [policy_gradient]
+    sources:
+      - "Schulman et al. 2017"
+      - {cite: "Sutton & Barto 2018", title: "Reinforcement learning: an introduction (2nd ed.)", url: "http://incompleteideas.net/book/the-book-2nd.html"}
+    text: >-
+      The two parts of an actor-critic method. The actor is the policy, choosing actions; the
+      critic estimates the value of a state, the total reward still expected from it (the return).
+      Comparing what happened with the critic's estimate tells the actor which actions did better
+      than expected.
+  - term: Clipping
+    group: rl
+    match: [clipping, clipped]
+    used_in: [policy_gradient]
+    sources: [Schulman et al. 2017]
+    text: >-
+      Capping how far one training step may move the policy: PPO stops rewarding a change once an
+      action's probability has moved more than about 20% from before the step. It keeps learning
+      steady, since one lucky or unlucky batch can't swing the policy far.
+  - term: Environment
+    group: rl
+    match: [environment, environments]
+    used_in: [policy_gradient]
+    sources:
+      - {cite: "Sutton & Barto 2018", title: "Reinforcement learning: an introduction (2nd ed.)", url: "http://incompleteideas.net/book/the-book-2nd.html"}
+    text: >-
+      Everything outside the network that it acts on: a game, a simulator, a robot's surroundings,
+      a person rating answers. It takes each action and returns the next state and a reward. The
+      guide draws it as an outlined box.
+  - term: Policy
+    group: rl
+    match: [policy, policies]
+    used_in: [policy_gradient]
+    sources:
+      - {cite: "Sutton & Barto 2018", title: "Reinforcement learning: an introduction (2nd ed.)", url: "http://incompleteideas.net/book/the-book-2nd.html"}
+      - "Williams 1992"
+    text: >-
+      In reinforcement learning, the network that chooses actions: given the current state, it
+      gives the probability of each action, and one is drawn. Policy-gradient methods train it
+      directly, making well-rewarded actions more likely.
+  - term: Reinforcement learning
+    group: rl
+    match: [reinforcement learning, RLHF]
+    objective: reward
+    sources:
+      - {cite: "Sutton & Barto 2018", title: "Reinforcement learning: an introduction (2nd ed.)", url: "http://incompleteideas.net/book/the-book-2nd.html"}
+      - "Ouyang et al. 2022"
+    text: >-
+      Learning by trial and error. A network, the policy, chooses actions, and the environment
+      returns rewards: scores for how well things went. Training makes actions that led to more
+      reward more likely. RLHF fine-tunes language models this way, with rewards from a model
+      trained on people's preferences.
+  - term: Reward
+    group: rl
+    match: [reward, rewards]
+    used_in: [policy_gradient]
+    sources:
+      - {cite: "Sutton & Barto 2018", title: "Reinforcement learning: an introduction (2nd ed.)", url: "http://incompleteideas.net/book/the-book-2nd.html"}
+      - "Ouyang et al. 2022"
+    text: >-
+      The score the environment returns after an action, such as +1 for each step the pole stays
+      up. Training aims for the most reward over time, not at each step; in RLHF a model trained
+      on people's preferences gives it.
+  # ---- model families
+  - term: Autoregressive model
+    group: models
+    match: [autoregressive models, autoregressive model, autoregressive, autoregressively]
+    used_in: [gpt, transformer, rnn_attention, wavenet, linear_attention, mamba_hybrid, diffusion_llm]
+    sources: [van den Oord et al. 2016, Radford et al. 2018]
+    text: >-
+      A model that generates one piece at a time, each predicted from everything before it,
+      feeding each output back in as the next input. Most language models work this way; diffusion
+      language models fill in many tokens at once instead.
+  - term: Diffusion
+    group: models
+    match: [diffusion models, diffusion model, diffusion]
+    used_in: [diffusion, diffusion_llm, unet, flow_matching]
+    sources: [Sohl-Dickstein et al. 2015, "Ho, Jain & Abbeel 2020"]
+    text: >-
+      Generating data by learning to undo a gradual noising: a network is trained to remove a
+      little noise at a time, then run from pure noise, step by step, to make something new. The
+      Diffusion model panel draws it; masked diffusion LLMs do the same with masked tokens.
+  - term: Generator and discriminator
+    group: models
+    match: [generators, generator, discriminators, discriminator]
+    link_in: [gan, primer]
+    used_in: [gan]
+    sources: [Goodfellow et al. 2014]
+    text: >-
+      The two networks of a GAN. The generator turns random noise into a sample; the discriminator
+      sees real data and the generator's samples and guesses which is which. After training, only
+      the generator is kept.
+  - term: Normalizing flow
+    group: models
+    match: [normalizing flows, normalizing flow]
+    used_in: [normalizing_flow, flow_matching]
+    sources: ["Dinh, Krueger & Bengio 2014", Chen et al. 2018]
+    text: >-
+      A generative model built from invertible steps that turn simple noise into data and back, so
+      it can say exactly how probable any data is. Flow matching trains a continuous one, whose
+      steps are tiny moves along a learned velocity.
+  # ---- tasks and data
+  - term: Clustering
+    group: tasks
+    figure: kmeans_rounds
+    match: [clustering, clusters, cluster]
+    used_in: [rbf, som]
+    sources: ["Moody & Darken 1989", Kohonen 1982]
+    text: >-
+      Grouping data points that lie close together, with no labels. A radial basis network often
+      places its centers by clustering the training data, and a Kohonen map clusters as it learns.
+  - term: Principal component
+    group: tasks
+    match: [principal component analysis, principal components, principal component, PCA]
+    used_in: [autoencoder]
+    sources: ["Bourlard & Kamp 1988"]
+    text: >-
+      A direction along which data varies most; the first few give the best straight-line
+      compression of the data. A linear autoencoder with a narrow middle learns the same subspace,
+      so it takes nonlinear layers to do better.
+  - term: Quantization
+    group: tasks
+    figure: quantize_wave
+    match: [quantized, quantization, quantize, quantizes]
+    used_in: [wavenet]
+    sources: [van den Oord et al. 2016]
+    text: >-
+      Rounding values to one of a fixed set of levels. WaveNet quantizes each audio sample to one
+      of 256 values, so it can predict the next as a choice among them with a softmax. (Quantizing
+      a model's weights to fewer bits, to save memory, is the same idea.)
+  - term: Segmentation
+    group: tasks
+    match: [segmentation, segmenting]
+    used_in: [unet]
+    sources: ["Ronneberger, Fischer & Brox 2015"]
+    text: >-
+      Labeling every pixel of an image with what it shows, such as cell or background, rather than
+      labeling the image as a whole. A U-Net outputs a full-size map for it.
+  - term: Zero-shot
+    group: tasks
+    match: [zero-shot classification, zero-shot]
+    used_in: [clip, gpt]
+    sources: [Radford et al. 2021]
+    text: >-
+      Doing a task with no training examples of it. CLIP classifies an image by comparing it with
+      captions such as “a photo of a dog”, so it can use labels it was never trained on.
+  # ---- scale
+  - term: Context window
+    group: scale
+    figure: context_slide
+    labels: [Tokens, Attention, Next token]
+    match: [context windows, context window, contexts, context]
+    used_in: [gpt, transformer, mamba, mamba_hybrid, linear_attention, diffusion_llm]
+    sources: [Vaswani et al. 2017]
+    text: >-
+      How many tokens a model can take into account at once: its working memory. Attention's cost
+      grows with it, which is why linear-time and hybrid models aim at long contexts.
+  - term: KV cache
+    group: scale
+    match: [KV cache, KV caches, cache]
+    used_in: [gpt, transformer, linear_attention, mamba, mamba_hybrid]
+    sources:
+      - "Vaswani et al. 2017"
+      - {cite: "Pope et al. 2022", title: "Efficiently scaling Transformer inference", url: "https://arxiv.org/abs/2211.05102"}
+    text: >-
+      The keys and values a Transformer keeps for every earlier token as it generates, so each new
+      token can attend to them without recomputing them. It grows with the context, and so does
+      the cost of each new token; recurrent and state-space layers keep a fixed-size state
+      instead.
+  - term: Quadratic and linear time
+    group: scale
+    match: [quadratic, linear-time, linear time]
+    used_in: [transformer, linear_attention, mamba, mamba_hybrid, gpt, bert]
+    sources: [Katharopoulos et al. 2020]
+    text: >-
+      Attention compares every pair of positions, so its work grows with the square of the length:
+      twice the text, four times the work. Recurrent and state-space models carry a fixed-size
+      state instead, so their work grows only in step with the length.
 
 credit: Inspired by The Neural Network Zoo by Fjodor van Veen (Asimov Institute, 2016; updated with Stefan Leijnen, 2019).
 credit_link: {text: The Neural Network Zoo, url: "https://www.asimovinstitute.org/neural-network-zoo/"}
@@ -1018,35 +2564,34 @@ architectures:
       (2020) made it work well with a simpler denoising objective; the denoiser is usually a
       U-Net or a Transformer.
     read: >-
-      The triangle-marked inputs are the noisy sample `x`_{`t`} at the current step. The box is
-      the denoiser `ε`_{`θ`}, which can be any network and is told the noise level. The curved
-      lines combine its guess of the noise with the sample, taking a little of that noise away,
-      and the arrows from the wave-marked unit add a little fresh random noise to every unit on
-      every step but the last, as DDPM's sampler does (faster samplers such as DDIM leave it
-      out). The line around the drawing is the sampling loop: every output goes back in as the
-      next step's input. Step through shows one denoising step; sampling repeats it `T` times,
-      starting from pure noise.
+      Time runs left to right, from pure noise (the wave-marked unit at the left) to a sample
+      (red). Each triangle-marked unit is the noisy sample `x`_{`t`} at one step, and each box is
+      the denoiser `ε`_{`θ`}: the same network at every step, told the noise level. It reads the
+      sample and guesses the noise in it; the next sample is the old one (the arrow along the
+      bottom) with a little of that noise taken away. The wave-marked units above add a little
+      fresh random noise at every step but the last, as DDPM's sampler does (faster samplers such
+      as DDIM leave it out). Three steps are drawn; sampling takes tens to a thousand. Step
+      through runs them in order.
     papers:
       - {cite: Sohl-Dickstein et al. 2015, title: "Deep unsupervised learning using nonequilibrium thermodynamics", url: "https://arxiv.org/abs/1503.03585"}
       - {cite: "Ho, Jain & Abbeel 2020", title: "Denoising diffusion probabilistic models", url: "https://arxiv.org/abs/2006.11239"}
     diagram:
-      span: [127.5, 28.5]   # rows pulled in for the whole-row return line
       rows:
-        - {id: x, cell: noisy, n: 3}
-        - {id: h, cell: network, n: 1, connect: full}
-        - {id: y, cell: output, n: 3, connect: full}
-        - {id: z, cell: noise, n: 1, xs: [56], y: 78}   # fresh noise for each step, in the first column under its output
-      arcs:
-        # the denoiser's guess is combined with the point, as in flow matching; the outer skips face outward
-        - {from: [x, 0], to: [y, 0], side: left}
-        - {from: [x, 1], to: [y, 1], side: right}
-        - {from: [x, 2], to: [y, 2], side: right}
-      arrows:   # fresh noise into every unit, each step
-        - {from: [z, 0], to: [y, 0]}
-        - {from: [z, 0], to: [y, 1]}
-        - {from: [z, 0], to: [y, 2]}
-      loops:
-        - {from: [y, 2], to: [x, 2], side: right, whole: true}
+        - {id: x, cell: [noise, noisy, noisy, output], xs: [24, 80, 136, 192], y: 116, marks: [true, false, false, true]}   # time runs left to right: noise to sample
+        - {id: n, cell: network, n: 3, xs: [52, 108, 164], y: 64}   # the same network at every step
+        - {id: z, cell: noise, n: 2, xs: [80, 136], y: 26}   # fresh noise at every step but the last
+      links:
+        - {from: x, to: x, rule: pairs, pairs: [[0, 1], [1, 2], [2, 3]], style: state}   # the sample carried on to the next step
+        - {from: x, to: n, rule: pairs, pairs: [[0, 0], [1, 1], [2, 2]]}
+        - {from: n, to: x, rule: pairs, pairs: [[0, 1], [1, 2], [2, 3]]}   # its guess of the noise, taken away
+      arrows:
+        - {from: [z, 0], to: [x, 1]}
+        - {from: [z, 1], to: [x, 2]}
+      flow:   # sampling: one step at a time, from noise to a sample
+        - {to: [x, 0]}
+        - {to: [[n, 0], [x, 1]], within: true, from: [[x, 0], [z, 0]]}
+        - {to: [[n, 1], [x, 2]], within: true, from: [[x, 1], [z, 1]]}
+        - {to: [[n, 2], [x, 3]], within: true, from: [x, 2]}
 
   # ---------------------------------------------------------------- flows and WaveNet
   normalizing_flow:
@@ -1114,10 +2659,10 @@ architectures:
       - {cite: "Bai, Kolter & Koltun 2018", title: "An empirical evaluation of generic convolutional and recurrent networks for sequence modeling", url: "https://arxiv.org/abs/1803.01271"}
     diagram:
       rows:
-        - {id: x, cell: input, n: 6, pitch: 32}
-        - {id: c1, cell: conv, n: 6, pitch: 32}
-        - {id: c2, cell: conv, n: 6, pitch: 32}
-        - {id: y, cell: output, n: 6, pitch: 32}   # the outputs are the last dilated layer, as in the paper's figure
+        - {id: x, cell: input, n: 6, pitch: 34}   # as wide as the panel allows: the edge cells' ticks reach its margin
+        - {id: c1, cell: conv, n: 6, pitch: 34}
+        - {id: c2, cell: conv, n: 6, pitch: 34}
+        - {id: y, cell: output, n: 6, pitch: 34}   # the outputs are the last dilated layer, as in the paper's figure
       links:
         - {from: x, to: c1, rule: pairs, pairs: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]}
         - {from: c1, to: c2, rule: pairs, pairs: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [0, 2], [1, 3], [2, 4], [3, 5]]}
@@ -1150,39 +2695,39 @@ architectures:
       usually a U-Net or a Transformer. Stable Diffusion 3, Flux, and Movie Gen generate this
       way.
     read: >-
-      The network is the diffusion model's; what differs in the versions drawn here is the
-      target it learns (a velocity, not the noise; diffusion models can also be trained to
-      predict a velocity) and the path it is trained along (usually a straight line from noise
-      to data). The triangle-marked inputs are a point `x`_{`t`} partway along that path, and
-      the network's arrow-marked outputs its velocity `v`. Each red cell above is the moved
-      point, `x`_{`t`} + Δ`t`·`v`: the curved lines bring the point around the network to add to
-      the velocity scaled by the step size, as a neural ODE's solver does, and the line around
-      the drawing feeds the moved point back in. No fresh noise is added, so sampling is
-      deterministic. Step through shows one step of the solver; sampling takes many, from noise
-      to data.
+      Time runs left to right, from noise (the wave-marked unit) to a sample (red), one step of
+      the solver per column. Each triangle-marked unit is a point `x`_{`t`} partway along the
+      path, and each box is the same network, told the time; its arrow-marked output is the
+      velocity `v` at that point. The next point is the old one moved along it, `x`_{`t`} +
+      Δ`t`·`v` (the arrows carry it: no learned weights). No fresh noise is added, so sampling is
+      deterministic: the visible difference from the diffusion model, whose network guesses noise
+      rather than a velocity. Training regresses that velocity toward the target along a chosen
+      path, usually a straight line from noise to data. Three steps are drawn; samplers usually
+      take tens.
     papers:
       - {cite: Chen et al. 2018, title: "Neural ordinary differential equations", url: "https://arxiv.org/abs/1806.07366"}
       - {cite: Lipman et al. 2022, title: "Flow matching for generative modeling", url: "https://arxiv.org/abs/2210.02747"}
       - {cite: "Liu, Gong & Liu 2022", title: "Flow straight and fast: Learning to generate and transfer data with rectified flow", url: "https://arxiv.org/abs/2209.03003"}
       - {cite: Esser et al. 2024, title: "Scaling rectified flow transformers for high-resolution image synthesis", url: "https://arxiv.org/abs/2403.03206"}
     diagram:
-      span: [127.5, 28.5]   # rows pulled in for the whole-row return line
       rows:
-        - {id: x, cell: noisy, n: 3}
-        - {id: h, cell: network, n: 1, connect: full}
-        - {id: v, cell: velocity, n: 3, connect: full, marks: false}   # the network's prediction
-        - {id: y, cell: output, n: 3, connect: one, style: state}   # the moved point: the point plus the velocity times the step (an arrow: no learned weight)
-      arcs:
-        # the point comes around the network to be added to its velocity, one solver step; the outer skips face outward
-        - {from: [x, 0], to: [y, 0], side: left}
-        - {from: [x, 1], to: [y, 1], side: right}
-        - {from: [x, 2], to: [y, 2], side: right}
-      loops:
-        - {from: [y, 2], to: [x, 2], side: right, whole: true}
+        - {id: x, cell: [noise, noisy, noisy, output], xs: [24, 80, 136, 192], y: 116, marks: [true, false, false, true]}   # time runs left to right: noise to sample
+        - {id: n, cell: network, n: 3, xs: [52, 108, 164], y: 64}   # the same network at every step
+        - {id: v, cell: velocity, n: 3, xs: [80, 136, 192], y: 64, marks: false}   # each step's velocity
+      links:
+        - {from: x, to: x, rule: pairs, pairs: [[0, 1], [1, 2], [2, 3]], style: state}   # the sample carried on to the next step
+        - {from: x, to: n, rule: pairs, pairs: [[0, 0], [1, 1], [2, 2]]}
+        - {from: n, to: v, rule: pairs, pairs: [[0, 0], [1, 1], [2, 2]]}
+        - {from: v, to: x, rule: pairs, pairs: [[0, 1], [1, 2], [2, 3]], style: state}   # the point moved along it (an arrow: no learned weight)
+      flow:   # sampling: one solver step at a time, from noise to a sample
+        - {to: [x, 0]}
+        - {to: [[n, 0], [v, 0], [x, 1]], within: true, from: [x, 0]}
+        - {to: [[n, 1], [v, 1], [x, 2]], within: true, from: [x, 1]}
+        - {to: [[n, 2], [v, 2], [x, 3]], within: true, from: [x, 2]}
 
   # ---------------------------------------------------------------- reinforcement learning
   policy_gradient:
-    name: Policy gradient (PPO)
+    name: Actor-critic (PPO)
     full: Proximal policy optimization
     year: 2017
     caption: More of what earned reward
@@ -1214,20 +2759,22 @@ architectures:
       Atari games, a Transformer for RLHF. Two heads come out: the policy (right), the probability of each
       action, and the value (left), its estimate of the reward still to come. The hollow box on
       the side is the environment: it takes the sampled action and returns the next state and
-      a reward.
+      a reward. One network giving both a policy (the actor) and a value (the critic) is what
+      makes it actor-critic; value-based methods such as DQN instead output one value per
+      action, and model-based ones act inside a learned model of the environment.
     papers:
       - {cite: Schulman et al. 2017, title: "Proximal policy optimization algorithms", url: "https://arxiv.org/abs/1707.06347"}
       - {cite: Williams 1992, title: "Simple statistical gradient-following algorithms for connectionist reinforcement learning", url: "https://doi.org/10.1007/BF00992696"}
       - {cite: Mnih et al. 2016, title: "Asynchronous methods for deep reinforcement learning", url: "https://arxiv.org/abs/1602.01783"}
       - {cite: Ouyang et al. 2022, title: "Training language models to follow instructions with human feedback", url: "https://arxiv.org/abs/2203.02155"}
     diagram:
-      span: [127.5, 28.5]   # rows pulled in for the whole-row return line
+      span: [120.1, 23.9]   # rows pulled in for the whole-row return line, so its stems end where every panel's do
       rows:
-        - {id: s, cell: input, n: 4, xs: [24, 72, 120, 168], y: 127.5}   # position, speed, angle, spin
-        - {id: h, cell: network, n: 1, xs: [96], y: 78, connect: full, from: s}
-        - {id: v, cell: output, n: 1, xs: [48], y: 28.5, connect: full, from: h}   # the value head, then the policy: the three outputs 48 apart over the box
-        - {id: p, cell: output, n: 2, xs: [96, 144], y: 28.5, connect: full, from: h}   # the policy: left, right
-        - {id: e, cell: environment, n: 1, y: 78}   # set on the loop's side by the loop
+        - {id: s, cell: input, n: 4, xs: [24, 72, 120, 168], y: 120.1}   # position, speed, angle, spin
+        - {id: h, cell: network, n: 1, xs: [96], y: 72, connect: full, from: s}
+        - {id: v, cell: output, n: 1, xs: [48], y: 23.9, connect: full, from: h}   # the value head, then the policy: the three outputs 48 apart over the box
+        - {id: p, cell: output, n: 2, xs: [96, 144], y: 23.9, connect: full, from: h}   # the policy: left, right
+        - {id: e, cell: environment, n: 1, y: 72}   # set on the loop's side by the loop
       loops:
         - {from: [p, 1], to: [s, 3], side: right, whole: true, via: [e, 0]}   # the action out, through the environment, the next state in
 
@@ -1257,6 +2804,7 @@ architectures:
       position at a time, each output becoming the next input.
     papers:
       - {cite: Vaswani et al. 2017, title: "Attention is all you need", url: "https://arxiv.org/abs/1706.03762"}
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
       levels: 4
       rows:
@@ -1289,6 +2837,7 @@ architectures:
     read: The dashed input is a masked word, and only its prediction is scored for that task, so the other outputs are faded. Next-sentence prediction, not drawn, is scored from the first token's output.
     papers:
       - {cite: Devlin et al. 2018, title: "BERT: Pre-training of deep bidirectional transformers for language understanding", url: "https://arxiv.org/abs/1810.04805"}
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
       rows:
         - {cell: [input, input, mask, input]}
@@ -1315,6 +2864,7 @@ architectures:
       time, each output becoming the next input.
     papers:
       - {cite: Radford et al. 2018, title: "Improving language understanding by generative pre-training", url: "https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf"}
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
       rows:
         - {id: x, cell: input, n: 4}
@@ -1345,13 +2895,14 @@ architectures:
       original paper instead adds an extra class token, which it found works about as well.
     papers:
       - {cite: Dosovitskiy et al. 2020, title: "An image is worth 16x16 words: Transformers for image recognition at scale", url: "https://arxiv.org/abs/2010.11929"}
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
       rows:
-        - {id: img, cell: patch, n: 4, xs: [34, 51, 34, 51], ys: [121, 121, 138, 138], marks: false}
-        - {id: t, cell: patch, n: 4, xs: [77, 109, 141, 173], y: 113.6, marks: false}   # its feed line meets the image's centre
-        - {id: a1, cell: attention, n: 4, xs: [77, 109, 141, 173], y: 80.4, connect: full, from: t, style: cross}   # rows evenly spaced up to the output
-        - {id: a2, cell: attention, n: 4, xs: [77, 109, 141, 173], y: 47.2, connect: full, from: a1, style: cross}
-        - {id: y, cell: output, n: 1, xs: [125], y: 14, connect: full, from: a2}
+        - {id: img, cell: patch, n: 4, xs: [16, 33, 16, 33], ys: [121, 121, 138, 138], marks: false}
+        - {id: t, cell: patch, n: 4, xs: [64, 106.7, 149.3, 192], y: 113.6, marks: false}   # its feed line meets the image's centre
+        - {id: a1, cell: attention, n: 4, xs: [64, 106.7, 149.3, 192], y: 80.4, connect: full, from: t, style: cross}   # rows evenly spaced up to the output
+        - {id: a2, cell: attention, n: 4, xs: [64, 106.7, 149.3, 192], y: 47.2, connect: full, from: a1, style: cross}
+        - {id: y, cell: output, n: 1, xs: [128], y: 14, connect: full, from: a2}
       feeds:
         - {from: img, to: t, branches: true}
 
@@ -1376,6 +2927,7 @@ architectures:
       text encoder from its last token.
     papers:
       - {cite: Radford et al. 2021, title: "Learning transferable visual models from natural language supervision", url: "https://arxiv.org/abs/2103.00020"}
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
       levels: 4
       rows:
@@ -1420,8 +2972,9 @@ architectures:
       - {cite: Nie et al. 2025, title: "Large language diffusion models", url: "https://arxiv.org/abs/2502.09992"}
       - {cite: Austin et al. 2021, title: "Structured denoising diffusion models in discrete state-spaces", url: "https://arxiv.org/abs/2107.03006"}
       - {cite: Sahoo et al. 2024, title: "Simple and effective masked diffusion language models", url: "https://arxiv.org/abs/2406.07524"}
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
-      span: [127.5, 28.5]   # rows pulled in for the whole-row return line
+      span: [120.1, 23.9]   # rows pulled in for the whole-row return line, so its stems end where every panel's do
       rows:
         - {id: x, cell: [input, mask, input, mask]}
         - {id: a1, cell: attention, n: 4, connect: full, style: cross}
@@ -1455,6 +3008,7 @@ architectures:
       - {cite: Peng et al. 2023, title: "RWKV: Reinventing RNNs for the Transformer era", url: "https://arxiv.org/abs/2305.13048"}
       - {cite: Beck et al. 2024, title: "xLSTM: Extended long short-term memory", url: "https://arxiv.org/abs/2405.04517"}
       - {cite: "Yang, Kautz & Hatamizadeh 2024", title: "Gated delta networks: Improving Mamba2 with delta rule", url: "https://arxiv.org/abs/2412.06464"}
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
       rows:
         - {cell: input, n: 4}
@@ -1480,6 +3034,7 @@ architectures:
       each square holds a matrix-valued state.
     papers:
       - {cite: Gu & Dao 2023, title: "Mamba: Linear-time sequence modeling with selective state spaces", url: "https://arxiv.org/abs/2312.00752"}
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
       rows:
         - {cell: input, n: 4}
@@ -1511,6 +3066,7 @@ architectures:
       squares below and above it are Mamba-style layers: each carries a matrix-valued state
       forward, and the gate dots show it deciding, from each input, how much of that state to
       keep.
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
       rows:   # the attention row is given room to fan out over the state squares below it
         - {cell: input, n: 4, y: 130}
@@ -1582,6 +3138,7 @@ architectures:
       - {cite: Lepikhin et al. 2020, title: "GShard: Scaling giant models with conditional computation and automatic sharding", url: "https://arxiv.org/abs/2006.16668"}
       - {cite: "Fedus, Zoph & Shazeer 2021", title: "Switch Transformers: Scaling to trillion parameter models with simple and efficient sparsity", url: "https://arxiv.org/abs/2101.03961"}
       - {cite: Jiang et al. 2024, title: "Mixtral of experts", url: "https://arxiv.org/abs/2401.04088"}
+    contains: [skip]   # each block's residual connections, not drawn
     diagram:
       rows:
         - {id: t, cell: input, n: 4, y: 130}

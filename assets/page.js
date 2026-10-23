@@ -254,44 +254,72 @@
     run();
   });
 
-  // The primer, opened by the "?" button
-  // and by a link to #primer or #primer-<anchor>, which opens it at that section. While open,
-  // the address shows #primer, so it can be shared; closing puts back the address it replaced.
+  // The primer, opened by the "?" button, and the glossary, by its book button: each a sheet
+  // also opened by a link to #<name> or #<name>-<anchor>, which opens it at that section. While
+  // open, the address shows it, so it can be shared; closing puts back the address it replaced.
+  function makeSheet(sheet, name, titleId, closeId, btnId) {
+    let from = null, prev = null;
+    function more() {  // the fade above Close shows while more lies below
+      sheet.classList.toggle('more', sheet.scrollTop + sheet.clientHeight < sheet.scrollHeight - 2);
+    }
+    function openAt(anchor, opener) {
+      from = opener || null;
+      if (!sheet.open) {
+        prev = location.hash.startsWith('#' + name) ? '' : location.hash;  // opened from its own link
+        if (typeof sheet.showModal === 'function') sheet.showModal(); else sheet.setAttribute('open', '');
+      }
+      try { history.replaceState(null, '', '#' + name + (anchor ? '-' + anchor : '')); } catch (e) {}
+      const target = anchor && document.getElementById(name + '-' + anchor);
+      sheet.scrollTop = 0;
+      if (target) {
+        sheet.scrollTop = target.getBoundingClientRect().top - sheet.getBoundingClientRect().top - 28;
+        target.focus({ preventScroll: true });
+      } else {
+        document.getElementById(titleId).focus({ preventScroll: true });
+      }
+      sheet.classList.add('instant');  // the fade above Close, as on a panel: set at once on opening
+      more();
+      requestAnimationFrame(() => requestAnimationFrame(() => sheet.classList.remove('instant')));
+    }
+    sheet.addEventListener('scroll', more, { passive: true });
+    window.addEventListener('resize', () => { if (sheet.open) more(); });
+    const btn = document.getElementById(btnId);
+    if (btn) btn.addEventListener('click', e => openAt(null, e.currentTarget));
+    document.getElementById(closeId).addEventListener('click', () => sheet.close());
+    sheet.addEventListener('click', e => { if (e.target === sheet) sheet.close(); });
+    sheet.addEventListener('close', () => {
+      try { history.replaceState(null, '', location.pathname + location.search + (prev || '')); } catch (e) {}
+      const back = from && document.contains(from) ? from : btn;
+      if (back) back.focus();
+    });
+    // within a link inside the sheet, move to the section it names
+    sheet.addEventListener('click', e => {
+      const a = e.target.closest('a[href^="#' + name + '-"]');
+      if (!a) return;
+      e.preventDefault();
+      openAt(a.getAttribute('href').slice(name.length + 2), from);
+    });
+    return openAt;
+  }
   const primer = document.getElementById('primer');
-  let primerFrom = null;
-  let primerPrev = null;
-  function openPrimer(anchor, from) {
-    primerFrom = from || null;
-    if (!primer.open) {
-      primerPrev = location.hash.startsWith('#primer') ? '' : location.hash;  // opened from its own link
-      try { history.replaceState(null, '', '#primer' + (anchor ? '-' + anchor : '')); } catch (e) {}
-      if (typeof primer.showModal === 'function') primer.showModal(); else primer.setAttribute('open', '');
-    }
-    const target = anchor && document.getElementById('primer-' + anchor);
-    primer.scrollTop = 0;
-    if (target) {
-      primer.scrollTop = target.getBoundingClientRect().top - primer.getBoundingClientRect().top - 28;
-      target.focus({ preventScroll: true });
-    } else {
-      document.getElementById('p-title').focus({ preventScroll: true });
-    }
-    primer.classList.add('instant');  // the fade above Close, as on a panel: set at once on opening
-    primerMore();
-    requestAnimationFrame(() => requestAnimationFrame(() => primer.classList.remove('instant')));
+  const openPrimer = makeSheet(primer, 'primer', 'p-title', 'p-close', 'help');
+  const glossary = document.getElementById('glossary');
+  const openGlossary = glossary ? makeSheet(glossary, 'glossary', 'g-title', 'g-close', 'gloss-btn') : null;
+  if (glossary) {
+    // Used in: closes the glossary and opens that panel
+    glossary.addEventListener('click', e => {
+      const b = e.target.closest('[data-open]');
+      if (!b) return;
+      // after the glossary has closed and put back the address it replaced
+      glossary.addEventListener('close', () => open(b.dataset.open), { once: true });
+      glossary.close();
+    });
+    // a term linked from a panel's text opens its entry, over the panel
+    document.addEventListener('click', e => {
+      const b = e.target.closest('.g-link');
+      if (b) openGlossary(b.dataset.g, b);
+    });
   }
-  // the fade above Close shows while more of the primer lies below
-  function primerMore() {
-    primer.classList.toggle('more', primer.scrollTop + primer.clientHeight < primer.scrollHeight - 2);
-  }
-  primer.addEventListener('scroll', primerMore, { passive: true });
-  window.addEventListener('resize', () => { if (primer.open) primerMore(); });
-  document.getElementById('help').addEventListener('click', e => openPrimer(null, e.currentTarget));
-  document.getElementById('p-close').addEventListener('click', () => primer.close());
-  primer.addEventListener('click', e => { if (e.target === primer) primer.close(); });
-  primer.addEventListener('close', () => {
-    try { history.replaceState(null, '', location.pathname + location.search + (primerPrev || '')); } catch (e) {}
-    (primerFrom || document.getElementById('help')).focus();
-  });
   const dlg = document.getElementById('detail');
   let family = 'all';
   let current = null;
@@ -319,9 +347,21 @@
   function pack() {
     const cols = colsNow();
     packBtn.hidden = cols < 3;
+    const colW = (groupsEl.clientWidth - 14 * (cols - 1)) / cols;
     for (const s of sections) {
       const n = s.querySelectorAll('.card:not([hidden])').length;
-      s.style.gridColumn = packOn && n && n < cols ? 'span ' + n : '';
+      // wide enough for its title on one line, even when filtered down to one card
+      const h = s.querySelector('h2');
+      let need = 1;
+      if (h) {
+        h.style.whiteSpace = 'nowrap';
+        const r = document.createRange();
+        r.selectNodeContents(h);
+        need = Math.ceil((r.getBoundingClientRect().width + 14) / (colW + 14));
+        h.style.whiteSpace = '';
+      }
+      const span = Math.max(n, need);
+      s.style.gridColumn = packOn && n && span < cols ? 'span ' + span : '';
     }
   }
   let packCols = 0;
@@ -465,6 +505,7 @@
     return {
       pinned: () => pinned,
       set: keys => { pinned = new Set(keys); lightUp(); },
+      pin,
     };
   }
   // light up the parts of one drawing for these entries, fading the rest
@@ -482,6 +523,14 @@
   document.getElementById('detail').addEventListener('click', e => {
     if (!e.target.closest('#d-key li[data-k]') && !fig.contains(e.target) && panelKey.pinned().size) panelKey.set([]);
   });
+  // and the other way: a click on a part of the drawing selects its key entry, as a click on
+  // the entry would (lighting every part of that kind); on empty drawing, it lets go
+  fig.addEventListener('click', e => {
+    const part = e.target.closest('[data-k]');
+    const k = part && part.dataset.k.split(' ').find(k => keyBox.querySelector('li[data-k="' + k + '"]'));
+    if (k) panelKey.pin(k, e.shiftKey);
+    else if (panelKey.pinned().size) panelKey.set([]);
+  });
 
   // The page's legend lights up every diagram: a card keeps its strength when it uses any
   // entry selected, with those parts lit, and fades when it uses none. A click anywhere on
@@ -492,8 +541,11 @@
     document.querySelectorAll('.card').forEach(card => {
       const svg = card.querySelector('svg');
       const uses = [...sel].some(k => svg.querySelector('[data-k~="' + k + '"]'));
-      card.classList.toggle('lg-out', sel.size > 0 && !uses);
-      lightDrawing(svg, sel);
+      // a network that has the part but doesn't draw it (a Transformer's residual connections)
+      const has = !uses && [...sel].some(k => (card.dataset.has || '').split(' ').includes(k));
+      card.classList.toggle('lg-out', sel.size > 0 && !uses && !has);
+      card.classList.toggle('lg-has', has);
+      lightDrawing(svg, has ? new Set() : sel);  // nothing in it to light: shown whole
     });
   });
   if (pageKey) {
@@ -594,6 +646,31 @@
     else if ('t1' in e.dataset) drawIn(e, rev, Math.max(1, ms * (+e.dataset.t1 - +e.dataset.t0)), ms * +e.dataset.t0);
     else drawIn(e, rev);
   }
+  // A chart figure's dot runs along its curve (data-track, the curve's points) to the point a
+  // step names (data-at), its dashed guides to both axes and its input's mark going with it
+  function placeDot(g, k) {
+    const p = g._pts[Math.max(0, Math.min(g._pts.length - 1, Math.round(k)))];
+    const [ax, ay] = g.dataset.axes.split(',').map(Number);
+    const [v, h] = g.querySelectorAll('line'), c = g.querySelector('.cv-out'), f = g.querySelector('.cv-foot');
+    c.setAttribute('cx', p[0]); c.setAttribute('cy', p[1]);
+    f.setAttribute('cx', p[0]); f.setAttribute('cy', ay);
+    v.setAttribute('x1', p[0]); v.setAttribute('y1', p[1]); v.setAttribute('x2', p[0]); v.setAttribute('y2', ay);
+    h.setAttribute('x1', p[0]); h.setAttribute('y1', p[1]); h.setAttribute('x2', ax); h.setAttribute('y2', p[1]);
+    g._at = k;
+  }
+  function runDot(g, to) {
+    g._pts = g._pts || g.dataset.track.split(' ').map(t => t.split(',').map(Number));
+    cancelAnimationFrame(g._raf);
+    const from = g._at === undefined ? to : g._at;
+    if (from === to || matchMedia('(prefers-reduced-motion: reduce)').matches) { placeDot(g, to); return; }
+    const t0 = performance.now(), ms = 1400;
+    const frame = now => {
+      const t = Math.min(1, (now - t0) / ms), e = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+      placeDot(g, from + (to - from) * e);
+      if (t < 1) g._raf = requestAnimationFrame(frame);
+    };
+    g._raf = requestAnimationFrame(frame);
+  }
   function makeFlow(fig, ctl) {
     const play = ctl.querySelector('.d-play');
     let timer = null, next = null;  // the next step, kept while paused
@@ -610,6 +687,9 @@
       fig.classList.remove('flow');
       fig.querySelectorAll('.later, .mid, .past').forEach(e => e.classList.remove('later', 'mid', 'past'));
       fig.querySelectorAll('[data-lag], [data-arrive]').forEach(e => { e.style.transitionDelay = ''; });
+      fig.querySelectorAll('[data-slide]').forEach(e => { e.style.transform = ''; });
+      fig.querySelectorAll('[data-move]').forEach(e => { e.style.transform = e._rest || ''; });  // back to how it rests
+      fig.querySelectorAll('[data-track]').forEach(g => { cancelAnimationFrame(g._raf); g._at = undefined; });
       setState('idle');
     }
     function run() {
@@ -625,6 +705,8 @@
       parts.forEach(e => { e.style.transition = ''; });
       setState('run');
       let i = 0;
+      const says = fig.dataset.say ? JSON.parse(fig.dataset.say) : null;  // a line for each step
+      const sayEl = fig.querySelector('.p-say');
       const seq = 'seq' in svg.dataset;  // a hand-written flow: parts show at listed steps
       // the steps that cascade, and the most slots in any, which share the step's time
       const lags = Array.from(fig.querySelectorAll('[data-lag]')).flatMap(e => e.dataset.lag.split(' '));
@@ -665,8 +747,22 @@
             if (+e.dataset.s === i) drawPart(e, false);
           });
         }
+        if (says && sayEl) sayEl.innerHTML = says[i] || '';  // built and escaped by guide.py
+        // a sliding filter moves along to where this step reads, its lines with it
+        if (svg.dataset.slideAt) {
+          const at = svg.dataset.slideAt.split(' ').map(Number), by = +svg.dataset.slideBy;
+          fig.querySelectorAll('[data-slide]').forEach(e => { e.style.transform = `translate(${by * (at[i] || 0)}px, 0)`; });
+        }
+        // a plane figure's line or arrow turns and shifts to where this step puts it
+        fig.querySelectorAll('[data-move]').forEach(e => {
+          if (e._rest === undefined) e._rest = e.style.transform;
+          e.style.transform = e.dataset.move.split('|')[i] || '';
+        });
+        fig.querySelectorAll('[data-track]').forEach(g => runDot(g, +(g.dataset.at.split('|')[i] || 0)));
         i += 1;
-        const ms = SPEEDS[speed][0];  // read each step, so a new speed applies from the next
+        // read each step, so a new speed applies from the next; a step with a line to read
+        // stays long enough to read it, at any speed
+        const ms = says ? Math.max(SPEEDS[speed][0], 3200) : SPEEDS[speed][0];
         next = i < n ? tick : stop;
         timer = setTimeout(next, i < n ? ms : 2 * ms);
       };
@@ -688,6 +784,7 @@
   const primerFlows = Array.from(document.querySelectorAll('.p-fig[data-flow]'))
     .map(f => makeFlow(f, f.querySelector('.d-flowctl')));
   primer.addEventListener('close', () => primerFlows.forEach(f => f.stop()));
+  if (glossary) glossary.addEventListener('close', () => primerFlows.forEach(f => f.stop()));
 
   function setText(id, text) {
     document.getElementById(id).textContent = text || '';
@@ -721,8 +818,20 @@
     document.getElementById('d-note').hidden = !d.note;
     document.getElementById('d-summary').innerHTML = d.summaryHtml;
     document.getElementById('d-read').innerHTML = d.readHtml;
-    setText('d-objective', d.objective + (d.objectiveNote ? ', ' + d.objectiveNote : '') +
+    setText('d-objective', (d.objectiveNote ? ', ' + d.objectiveNote : '') +
       (d.alsoObjectives.length ? '; also ' + d.alsoObjectives.join(', ') : ''));
+    // the objective's tag, linked to the glossary entry that defines it
+    const objEl = document.getElementById('d-objective');
+    if (d.objectiveGloss) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'g-link';
+      b.dataset.g = d.objectiveGloss;
+      b.textContent = d.objective;
+      objEl.prepend(b);
+    } else {
+      objEl.prepend(d.objective);
+    }
     document.getElementById('d-read-wrap').hidden = !d.read;
     setMenu(false);
     refreshMenu();
@@ -777,6 +886,9 @@
       rel.append(row);
     }
     document.getElementById('d-rel-wrap').hidden = !d.related.length && !d.aka.length;
+    const hasEl = document.getElementById('d-has');
+    hasEl.textContent = d.has;
+    hasEl.hidden = !d.has;
     const ul = document.getElementById('d-papers');
     ul.textContent = '';
     for (const p of d.papers) {
@@ -882,6 +994,7 @@
   const hash = decodeURIComponent(location.hash.slice(1));
   if (hash && DATA[hash]) open(hash);
   else if (hash === 'primer' || hash.startsWith('primer-')) openPrimer(hash.slice(7));
+  else if (glossary && (hash === 'glossary' || hash.startsWith('glossary-'))) openGlossary(hash.slice(9));
 
   // The Poster menu: its button opens it, Escape, Tab or a click outside closes it, and the
   // arrow keys move through it
