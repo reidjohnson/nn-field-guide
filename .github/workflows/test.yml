@@ -1,0 +1,16 @@
+# Run the browser tests on every push and pull request: the page is built (without the
+# chart's fonts, as in lint) and driven in Chromium, checking every step-through, every
+# glossary link, and the Back and Forward paths between the page's views.
+name: test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml pillow -r requirements-dev.txt
+      - run: playwright install --with-deps chromium
+      - run: python -m pytest tests

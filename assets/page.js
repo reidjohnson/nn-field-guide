@@ -111,12 +111,97 @@
   const groupsEl = document.getElementById('groups');
   const orderSel = document.getElementById('f-order');
   let sections = Array.from(groupsEl.querySelectorAll('section.family'));
+  // Pointing at a part of a figure: a mouse shows it while over it; a touch has no hover (the
+  // pointer leaves as the finger lifts), so a tap keeps the part shown until the next tap, on
+  // another part, the same one, or the figure's background. Where nothing hovers, the hint
+  // says Tap instead of Point at.
+  const HOVER = matchMedia('(hover: hover)').matches;
+  function pointable(fig, parts, show) {
+    let held = null;
+    parts.forEach(([hit, el]) => {
+      hit.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') show(el); });
+      hit.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') show(null); });
+      hit.addEventListener('pointerup', e => {
+        if (e.pointerType === 'mouse') return;
+        e.stopPropagation();
+        held = held === el ? null : el;
+        show(held);
+      });
+    });
+    const svg = fig.querySelector('svg');
+    svg.addEventListener('pointerup', e => {
+      if (e.pointerType !== 'mouse' && held) { held = null; show(null); }
+    });
+    // The keyboard: the units take one stop in the tab order (the first unit, or the last one
+    // visited), and the arrow keys move among them: left and right through them in order (rows
+    // from the inputs up), up and down to
+    // the nearest unit in the row above or below. Each says, as it takes focus, what pointing at
+    // it shows. The drawing becomes a group a screen reader can enter, its lines and labels
+    // hidden from it, since each unit's readout spells out the lines into it.
+    const units = parts.filter(([hit, el]) => hit === el && el.dataset.c).map(([, el]) => el);
+    if (!units.length) return;
+    const readEl = fig.querySelector('.p-read');
+    const box = u => { const b = u.getBBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    svg.setAttribute('role', 'group');
+    svg.setAttribute('aria-label', svg.getAttribute('aria-label') + '. Use the arrow keys to move between units.');
+    const keep = new Set();
+    units.forEach(u => { for (let e = u; e && e !== svg; e = e.parentNode) keep.add(e); });
+    svg.querySelectorAll('*').forEach(e => {
+      if (!keep.has(e) && !units.some(u => u.contains(e))) e.setAttribute('aria-hidden', 'true');
+    });
+    // rows bottom to top (inputs first), each left to right; measured when first needed, since
+    // a figure in a closed sheet has no size yet
+    let rows = null, flat = null;
+    const layout = () => {
+      if (rows) return;
+      rows = [];
+      units.map(u => [u, box(u)]).sort((a, b) => b[1].y - a[1].y || a[1].x - b[1].x).forEach(([u, p]) => {
+        const r = rows.find(r => Math.abs(r.y - p.y) < 4);
+        if (r) r.units.push(u); else rows.push({ y: p.y, units: [u] });
+      });
+      rows.forEach(r => r.units.sort((a, b) => box(a).x - box(b).x));
+      flat = rows.flatMap(r => r.units);
+    };
+    units.forEach(u => {
+      u.setAttribute('tabindex', u === units[0] ? '0' : '-1');  // the first in the drawing's own order
+      u.setAttribute('role', 'img');
+      u.addEventListener('focus', () => {
+        units.forEach(o => o.setAttribute('tabindex', o === u ? '0' : '-1'));
+        show(u);
+        readEl.setAttribute('aria-live', 'off');  // said once, as the unit's name, not again
+        u.setAttribute('aria-label', readEl.textContent);
+      });
+      u.addEventListener('blur', () => {
+        readEl.setAttribute('aria-live', 'polite');
+        if (held !== u) show(held);
+      });
+      u.addEventListener('keydown', e => {
+        layout();
+        const ri = rows.findIndex(r => r.units.includes(u)), ci = rows[ri].units.indexOf(u);
+        let to = null;
+        if (e.key === 'ArrowRight') to = flat[Math.min(flat.length - 1, flat.indexOf(u) + 1)];
+        else if (e.key === 'ArrowLeft') to = flat[Math.max(0, flat.indexOf(u) - 1)];
+        else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const r = rows[ri + (e.key === 'ArrowUp' ? 1 : -1)];
+          if (r) { const x = box(u).x; to = r.units.reduce((a, b) => Math.abs(box(b).x - x) < Math.abs(box(a).x - x) ? b : a); }
+          else to = u;
+        } else if (e.key === 'Home') to = flat[0];
+        else if (e.key === 'End') to = flat[flat.length - 1];
+        else return;
+        e.preventDefault();
+        e.stopPropagation();  // not the panel's or the sheet's own arrow keys
+        if (to && to !== u) to.focus();
+      });
+    });
+  }
+  const tapHint = el => { if (!HOVER) el.textContent = el.textContent.replace(/^Point at/, 'Tap'); };
   // A primer figure with tips: pointing at a part (or tapping it) keeps it, and for a cell the
   // lines into it, and fades the rest, and says what it does below. A part's text is found by
   // its key ("x.2", "x.2 n1.0") or, failing that, its row's ("x", "x n1").
   document.querySelectorAll('.p-tips').forEach(fig => {
     const tips = JSON.parse(fig.dataset.tips);
     const readEl = fig.querySelector('.p-read');
+    tapHint(readEl);
     const HINT = readEl.textContent;
     const row = k => k.split('.')[0];
     const cells = {};
@@ -145,19 +230,17 @@
     }
     const hits = document.createElementNS('http://www.w3.org/2000/svg', 'g');  // wide copies to point at
     hits.setAttribute('class', 'p-hits');
+    const parts = [];
     lines.forEach(l => {
       const h = l.cloneNode(false);
       ['data-e', 'data-s', 'data-on', 'data-k', 'style', 'marker-end', 'opacity', 'class'].forEach(a => h.removeAttribute(a));
-      h.addEventListener('pointerenter', () => point(l));
-      h.addEventListener('pointerleave', () => point(null));
+      parts.push([h, l]);
       hits.append(h);
     });
     const first = Object.values(cells)[0];  // beneath the cells, so they can still be pointed at
     first.closest('svg > *').before(hits);
-    Object.values(cells).forEach(c => {
-      c.addEventListener('pointerenter', () => point(c));
-      c.addEventListener('pointerleave', () => point(null));
-    });
+    Object.values(cells).forEach(c => parts.push([c, c]));
+    pointable(fig, parts, point);
   });
   // The primer's live network: the inputs come from the sliders, and each other unit takes
   // the weighted sum of the units below it, squashed by a sigmoid. A unit's brightness shows
@@ -176,6 +259,7 @@
     const outEl = fig.querySelector('.p-out');
     const sig = z => 1 / (1 + Math.exp(-z));
     const readEl = fig.querySelector('.p-read');
+    tapHint(readEl);
     const HINT = readEl.textContent;
     const nameOf = (k, cap) => {  // "input 2", "hidden unit 3 (layer 1)", "output 1"
       const r = rowOf(k), i = +k.split('.')[1] + 1;
@@ -213,19 +297,17 @@
     // a wide, invisible copy of each line to point at
     const hits = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     hits.setAttribute('class', 'p-hits');
+    const parts = [];
     lines.forEach(l => {
       const h = l.cloneNode(false);
       ['data-e', 'data-w', 'style', 'marker-end', 'opacity'].forEach(a => h.removeAttribute(a));
-      h.addEventListener('pointerenter', () => { pointed = l; explain(); });
-      h.addEventListener('pointerleave', () => { pointed = null; explain(); });
+      parts.push([h, l]);
       hits.append(h);
     });
     const firstCell = Object.values(cells)[0];
     firstCell.parentNode.insertBefore(hits, firstCell.closest('svg > *') || firstCell);
-    Object.values(cells).forEach(c => {
-      c.addEventListener('pointerenter', () => { pointed = c; explain(); });
-      c.addEventListener('pointerleave', () => { pointed = null; explain(); });
-    });
+    Object.values(cells).forEach(c => parts.push([c, c]));
+    pointable(fig, parts, el => { pointed = el; explain(); });
     function run() {
       act = {};
       sliders.forEach(s => { act[s.dataset.c] = +s.value; s.nextElementSibling.value = (+s.value).toFixed(2); });
@@ -257,22 +339,84 @@
   // The primer, opened by the "?" button, and the glossary, by its book button: each a sheet
   // also opened by a link to #<name> or #<name>-<anchor>, which opens it at that section. While
   // open, the address shows it, so it can be shared; closing puts back the address it replaced.
+  // The browser's Back and Forward. Opening a dialog from the page, or going from one to
+  // another, adds a step: its state counts the steps since the page (depth) and names the view
+  // left beneath it (under), as a panel under the glossary entry one of its terms opened.
+  // Moving within one view (Previous, Next, the glossary's index) replaces the step instead.
+  // A dialog closed by the reader goes back over the steps that opened it; one closed to
+  // match the address (route, below) closes quietly.
+  let routing = false;
+  function anyOpen() { return [dlg, primer, glossary].some(d => d && d.open); }
+  function push(hash, state) {
+    const depth = ((history.state && history.state.depth) || 0) + 1;
+    try { history.pushState(Object.assign({ depth }, state), '', hash); } catch (e) {}
+  }
+  function setHash(hash) {
+    if (!routing) try { history.replaceState(history.state, '', hash); } catch (e) {}
+  }
+  function quietClose(d) { d._quiet = true; d.close(); }
+  function leave() {  // the reader closed a dialog: back to what was beneath it, or the page
+    const st = history.state;
+    if (!st || !st.depth) return false;
+    if (st.under) history.go(-(st.depth - (st.base || 0))); else history.go(-st.depth);
+    return true;
+  }
   function makeSheet(sheet, name, titleId, closeId, btnId) {
     let from = null, prev = null;
+    sheet._from = () => from;
+    const top = sheet.querySelector('.nav-top');
     function more() {  // the fade above Close shows while more lies below
       sheet.classList.toggle('more', sheet.scrollTop + sheet.clientHeight < sheet.scrollHeight - 2);
-    }
-    function openAt(anchor, opener) {
-      from = opener || null;
-      if (!sheet.open) {
-        prev = location.hash.startsWith('#' + name) ? '' : location.hash;  // opened from its own link
-        if (typeof sheet.showModal === 'function') sheet.showModal(); else sheet.setAttribute('open', '');
+      // and "Index" once the index showing (by topic, or A to Z) has scrolled out of view
+      const index = sheet.querySelectorAll('.g-nav:not([hidden]) .g-group');
+      if (top && index.length) {
+        sheet.classList.toggle('past', index[index.length - 1].getBoundingClientRect().bottom < sheet.getBoundingClientRect().top);
       }
-      try { history.replaceState(null, '', '#' + name + (anchor ? '-' + anchor : '')); } catch (e) {}
+    }
+    if (top) top.addEventListener('click', () => {  // back to the index, the address back to the sheet's own
+      setHash('#' + name);
+      sheet.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      document.getElementById(titleId).focus({ preventScroll: true });
+    });
+    function openAt(anchor, opener, step) {  // `step`: a cross-reference, a step of its own
+      from = opener || null;
+      const hash = '#' + name + (anchor ? '-' + anchor : '');
+      sheet._hash = hash;  // where it is, so a return to it (Back, Close above it) keeps its place
+      if (!sheet.open) {
+        // its Close says where it leads, when it opened over something: back to that
+        const closeBtn = document.getElementById(closeId);
+        const beneath = sheet !== primer && primer.open ? 'the primer'
+          : dlg.open ? document.getElementById('d-name').textContent : '';
+        closeBtn.textContent = beneath ? 'Back to ' + beneath : 'Close';
+        prev = location.hash.startsWith('#' + name) ? '' : location.hash;  // opened from its own link
+        // a step of its own, over whatever is open beneath it
+        // and the step it opened over, so closing it goes back past every step taken within it
+        const st = history.state || {};
+        if (!routing) push(hash, anyOpen() ? { under: location.hash, base: st.depth || 0 } : { under: null });
+        if (typeof sheet.showModal === 'function') sheet.showModal(); else sheet.setAttribute('open', '');
+      } else if (step && !routing) {
+        const st = history.state || {};
+        push(hash, { under: st.under || null, base: st.base || 0 });
+      } else {
+        setHash(hash);
+      }
       const target = anchor && document.getElementById(name + '-' + anchor);
       sheet.scrollTop = 0;
+      // a section near the end can't scroll to the top on its own: an empty block after the
+      // text gives it just enough room, so its heading lands where every other one does
+      let room = sheet.querySelector(':scope > .sheet-room');
+      if (!room) {
+        room = document.createElement('div');
+        room.className = 'sheet-room';
+        room.setAttribute('aria-hidden', 'true');
+        sheet.querySelector(':scope > .p-wrap').after(room);
+      }
+      room.style.height = '0px';
       if (target) {
-        sheet.scrollTop = target.getBoundingClientRect().top - sheet.getBoundingClientRect().top - 28;
+        const want = target.getBoundingClientRect().top - sheet.getBoundingClientRect().top - 28;
+        const short = want - (sheet.scrollHeight - sheet.clientHeight);
+        if (short > 0) room.style.height = Math.ceil(short) + 'px';
+        sheet.scrollTop = want;
         target.focus({ preventScroll: true });
       } else {
         document.getElementById(titleId).focus({ preventScroll: true });
@@ -288,13 +432,16 @@
     document.getElementById(closeId).addEventListener('click', () => sheet.close());
     sheet.addEventListener('click', e => { if (e.target === sheet) sheet.close(); });
     sheet.addEventListener('close', () => {
-      try { history.replaceState(null, '', location.pathname + location.search + (prev || '')); } catch (e) {}
+      if (sheet._quiet) sheet._quiet = false;
+      else if (!leave()) {  // opened from a link: no step to go back over
+        try { history.replaceState(null, '', location.pathname + location.search + (prev || '')); } catch (e) {}
+      }
       const back = from && document.contains(from) ? from : btn;
       if (back) back.focus();
     });
     // within a link inside the sheet, move to the section it names
     sheet.addEventListener('click', e => {
-      const a = e.target.closest('a[href^="#' + name + '-"]');
+      const a = e.target.closest('a[href^="#' + name + '-"]:not(.g-link)');  // a term's link is handled below
       if (!a) return;
       e.preventDefault();
       openAt(a.getAttribute('href').slice(name.length + 2), from);
@@ -303,21 +450,97 @@
   }
   const primer = document.getElementById('primer');
   const openPrimer = makeSheet(primer, 'primer', 'p-title', 'p-close', 'help');
+  // a panel's link into the primer opens it over the panel, as a step its Back returns from
+  const scope = document.getElementById('d-scope');
+  if (scope) scope.addEventListener('click', e => {
+    const a = e.target.closest('a[href^="#primer-"]');
+    if (!a) return;
+    e.preventDefault();
+    openPrimer(a.getAttribute('href').slice(8), a);
+  });
   const glossary = document.getElementById('glossary');
   const openGlossary = glossary ? makeSheet(glossary, 'glossary', 'g-title', 'g-close', 'gloss-btn') : null;
+  const from0 = b => (glossary._from && glossary._from()) || b;  // what the glossary was opened from
+  // The glossary's order: by topic, as written, or A to Z, under a heading per letter (so the
+  // headings still step down one level at a time), with an index of its own. Remembered.
+  const gOrder = document.getElementById('g-order');
+  if (glossary && gOrder) {
+    const wrap = glossary.querySelector('.p-wrap');
+    const byTopic = Array.from(wrap.children);
+    const entries = [];
+    byTopic.forEach(e => {
+      if (e.tagName === 'H4') entries.push([e]);
+      else if (e.tagName === 'H3') entries.push(null);
+      else if (entries.length && entries[entries.length - 1] && !e.matches('.g-head, .g-nav')) entries[entries.length - 1].push(e);
+    });
+    const term = e => e[0].textContent.trim();
+    const sorted = entries.filter(Boolean).sort((a, b) => term(a).localeCompare(term(b), 'en', { sensitivity: 'base' }));
+    const azNav = document.createElement('nav');
+    azNav.className = 'g-nav';
+    azNav.setAttribute('aria-label', 'Index');
+    azNav.hidden = true;
+    azNav.innerHTML = '<div class="g-group"><p class="g-gname" id="gi-az">A to Z</p><ul class="g-index" aria-labelledby="gi-az"></ul></div>';
+    const list = azNav.querySelector('ul');
+    const byLetter = [];
+    sorted.forEach(e => {
+      const li = document.createElement('li'), a = document.createElement('a');
+      a.href = '#' + e[0].id;
+      a.textContent = term(e);
+      li.append(a);
+      list.append(li);
+      const letter = term(e)[0].toUpperCase();
+      if (!byLetter.length || byLetter[byLetter.length - 1].letter !== letter) {
+        const h = document.createElement('h3');
+        h.className = 'g-sec';
+        h.textContent = letter;
+        byLetter.push({ letter, h, items: [] });
+      }
+      byLetter[byLetter.length - 1].items.push(...e);
+    });
+    const topicNav = wrap.querySelector('.g-nav');
+    function order(az) {
+      if (az) {
+        topicNav.hidden = true;
+        azNav.hidden = false;
+        wrap.replaceChildren(wrap.querySelector('.g-head'), topicNav, azNav,
+          ...byLetter.flatMap(g => [g.h, ...g.items]));
+      } else {
+        topicNav.hidden = false;
+        azNav.hidden = true;
+        wrap.replaceChildren(...byTopic, azNav);
+      }
+    }
+    let saved = '';
+    try { saved = localStorage.getItem('field-guide-gloss-order') || ''; } catch (e) {}
+    if (saved === 'az') { gOrder.value = 'az'; order(true); }
+    gOrder.addEventListener('change', () => {
+      order(gOrder.value === 'az');
+      try { localStorage.setItem('field-guide-gloss-order', gOrder.value); } catch (e) {}
+    });
+  }
   if (glossary) {
     // Used in: closes the glossary and opens that panel
     glossary.addEventListener('click', e => {
       const b = e.target.closest('[data-open]');
       if (!b) return;
-      // after the glossary has closed and put back the address it replaced
-      glossary.addEventListener('close', () => open(b.dataset.open), { once: true });
-      glossary.close();
+      // the entry it was listed under, so the panel can offer a way back to it
+      let entry = b.closest('p');
+      while (entry && entry.tagName !== 'H4') entry = entry.previousElementSibling;
+      const slug = entry ? entry.id.slice('glossary-'.length) : null;
+      // the panel a step of its own, after the glossary's, so Back returns to the entry
+      glossary.addEventListener('close', () => {
+        open(b.dataset.open, { fromGloss: slug, fromTerm: entry ? entry.textContent : '' });
+        if (entry) showBack(slug, entry.textContent);
+      }, { once: true });
+      quietClose(glossary);
     });
     // a term linked from a panel's text opens its entry, over the panel
     document.addEventListener('click', e => {
       const b = e.target.closest('.g-link');
-      if (b) openGlossary(b.dataset.g, b);
+      if (!b || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;  // a new tab or window follows the address
+      e.preventDefault();
+      // within the glossary, a term in an entry's text is a step of its own: Back returns to the entry
+      if (b) openGlossary(b.dataset.g, glossary.contains(b) ? from0(b) : b, glossary.contains(b));
     });
   }
   const dlg = document.getElementById('detail');
@@ -386,6 +609,43 @@
     pack();
     count.textContent = shown + (shown === 1 ? ' diagram' : ' diagrams');
     empty.hidden = shown > 0;
+    suggestGloss(term);
+  }
+
+  // The search also suggests glossary entries: by name, then by the forms that link to them,
+  // then by their definitions; each opens the glossary at its entry
+  const GLOSS = (() => {
+    try { return JSON.parse(document.getElementById('gloss-data').textContent); } catch (e) { return []; }
+  })();
+  const suggest = document.getElementById('f-gloss');
+  function suggestGloss(term) {
+    if (!suggest) return;
+    const rankOf = e => {
+      const t = e.t.toLowerCase();
+      if (t === term) return 0;
+      if (t.startsWith(term)) return 1;
+      if (e.f.some(f => f.startsWith(term))) return 2;
+      if (t.includes(term) || e.f.some(f => f.includes(term))) return 3;
+      return e.d.toLowerCase().includes(term) ? 4 : 9;
+    };
+    const hits = term.length < 2 ? [] : GLOSS.map(e => [rankOf(e), e]).filter(h => h[0] < 9)
+      .sort((a, b) => a[0] - b[0] || a[1].t.localeCompare(b[1].t)).slice(0, 6);
+    suggest.replaceChildren();
+    suggest.hidden = !hits.length;
+    if (!hits.length) return;
+    const label = document.createElement('span');
+    label.className = 'k';
+    label.textContent = 'In the glossary:';
+    suggest.append(label);
+    hits.forEach(([, e]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'g-link g-chip';  // opens its entry, as a term in a panel does
+      b.dataset.g = e.g;
+      b.title = e.d;
+      b.textContent = e.t;
+      suggest.append(b);
+    });
   }
 
   famSel.addEventListener('change', () => { family = famSel.value; apply(); });
@@ -568,20 +828,21 @@
   const SPEEDS = { slow: [2000, 1200], normal: [1000, 600], fast: [500, 300] };
   let speed = 'normal';
   try { if (SPEEDS[localStorage.getItem('field-guide-speed')]) speed = localStorage.getItem('field-guide-speed'); } catch (e) {}
-  const speedBox = document.getElementById('d-speed');
+  // the speed, one for every step-through: each has a button beside it that cycles it
+  const RATES = { slow: '0.5×', normal: '1×', fast: '2×' }, NEXT = { slow: 'normal', normal: 'fast', fast: 'slow' };
   function setSpeed(v) {
     speed = v;
-    speedBox.querySelectorAll('[data-speed]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.speed === v)));
+    document.querySelectorAll('.d-rate').forEach(b => {
+      b.textContent = RATES[v];
+      b.setAttribute('aria-label', 'Step-through speed: ' + RATES[v]);
+    });
     document.documentElement.style.setProperty('--draw', SPEEDS[v][1] + 'ms');  // every drawing's
   }
   setSpeed(speed);
-  speedBox.addEventListener('click', e => {
-    const b = e.target.closest('[data-speed]');
-    if (!b) return;
-    setSpeed(b.dataset.speed);
-    try { localStorage.setItem('field-guide-speed', b.dataset.speed); } catch (e) {}
-    setMenu(false);
-    dlBtn.focus();
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.d-rate')) return;
+    setSpeed(NEXT[speed]);  // a running step-through takes it from its next step
+    try { localStorage.setItem('field-guide-speed', speed); } catch (err) {}
   });
   const drawMs = () => SPEEDS[speed][1];
   let maskN = 0;
@@ -671,15 +932,74 @@
     };
     g._raf = requestAnimationFrame(frame);
   }
-  function makeFlow(fig, ctl) {
+  // `sayEl`: a caption of its own, outside the figure (a panel's, under its drawing)
+  function makeFlow(fig, ctl, sayEl) {
     const play = ctl.querySelector('.d-play');
+    // the caption: a glossary figure's own, or a panel's, under its drawing
+    const sayIdle = sayEl || fig.querySelector('.p-say');
+    const idle = sayIdle ? sayIdle.innerHTML : '';
     let timer = null, next = null;  // the next step, kept while paused
+    let shown = -1, steps = 0, show = null;  // the step on screen, how many, and how to show one
     let pending = [];  // lines waiting for their slot in a cascade
+    // The caption shows only once stepping starts (at rest the text follows the figure closely,
+    // as part of its entry), as tall as its longest line at this width, so the text below moves
+    // once, not at every step
+    function fitSay() {
+      if (!sayIdle || !fig.dataset.say) return;
+      const keep = sayIdle.innerHTML;
+      sayIdle.style.minHeight = '';
+      const tallest = Math.max(...JSON.parse(fig.dataset.say).map(t => {
+        sayIdle.innerHTML = t;  // built and escaped by guide.py
+        return sayIdle.getBoundingClientRect().height;
+      }));
+      sayIdle.innerHTML = keep;
+      sayIdle.style.minHeight = tallest + 'px';
+    }
+    window.addEventListener('resize', () => { if (fig.classList.contains('saying')) fitSay(); });
     function setState(state) {
       ctl.dataset.state = state;
       play.querySelector('span').textContent = FLOW_LABELS[state];
+      stepButtons();
     }
-    function stop() {
+    // Back and forward a step at a time, shown once a step-through has started: either pauses
+    // it there, and Resume goes on from the step shown
+    const back = ctl.querySelector('.d-back'), fwd = ctl.querySelector('.d-fwd');
+    function stepButtons() {
+      if (!back) return;
+      const was = document.activeElement;
+      back.disabled = ctl.dataset.state === 'idle' || shown <= 0;
+      fwd.disabled = ctl.dataset.state === 'idle' || shown >= steps - 1;
+      // a button turned off at either end would drop the keyboard's place: it moves to Resume
+      if ((was === back || was === fwd) && was.disabled) play.focus();
+    }
+    function stepBy(d) {
+      if (ctl.dataset.state === 'idle' || !show) return;
+      const k = Math.max(0, Math.min(steps - 1, shown + d));
+      clearTimeout(timer);
+      setState('pause');
+      if (k !== shown) show(k);
+    }
+    if (back) {
+      back.addEventListener('click', () => stepBy(-1));
+      fwd.addEventListener('click', () => stepBy(1));
+    }
+    // the arrow keys step too, while a step-through is under way and its controls have focus
+    // (otherwise, on a panel, they move to the previous or next panel)
+    ctl.addEventListener('keydown', e => {
+      if (ctl.dataset.state === 'idle' || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      stepBy(e.key === 'ArrowLeft' ? -1 : 1);
+    });
+    // `reset` (Stop, closing, or the end of a run): the caption clears and its place closes; the
+    // last step's line stays up for twice a step's time first, to finish reading
+    function stop(reset) {
+      if (reset && sayIdle) {
+        fig.classList.remove('saying');
+        sayIdle.innerHTML = idle;
+        sayIdle.style.minHeight = '';
+        if (sayEl) sayEl.hidden = true;
+      }
       clearTimeout(timer);
       pending.forEach(clearTimeout);
       pending = [];
@@ -688,8 +1008,11 @@
       fig.querySelectorAll('.later, .mid, .past').forEach(e => e.classList.remove('later', 'mid', 'past'));
       fig.querySelectorAll('[data-lag], [data-arrive]').forEach(e => { e.style.transitionDelay = ''; });
       fig.querySelectorAll('[data-slide]').forEach(e => { e.style.transform = ''; });
-      fig.querySelectorAll('[data-move]').forEach(e => { e.style.transform = e._rest || ''; });  // back to how it rests
+      // back to how it rests: as it was before its first step, if it has run (a figure that never
+      // ran keeps its own: a bar's resting height is its transform)
+      fig.querySelectorAll('[data-move]').forEach(e => { if (e._rest !== undefined) e.style.transform = e._rest; });
       fig.querySelectorAll('[data-track]').forEach(g => { cancelAnimationFrame(g._raf); g._at = undefined; });
+      shown = -1;
       setState('idle');
     }
     function run() {
@@ -704,9 +1027,13 @@
       fig.getBoundingClientRect();
       parts.forEach(e => { e.style.transition = ''; });
       setState('run');
+      if (fig.dataset.say) {  // only a flow with captions shows the caption's place
+        if (sayEl) sayEl.hidden = false;
+        fig.classList.add('saying');
+        fitSay();
+      }
       let i = 0;
       const says = fig.dataset.say ? JSON.parse(fig.dataset.say) : null;  // a line for each step
-      const sayEl = fig.querySelector('.p-say');
       const seq = 'seq' in svg.dataset;  // a hand-written flow: parts show at listed steps
       // the steps that cascade, and the most slots in any, which share the step's time
       const lags = Array.from(fig.querySelectorAll('[data-lag]')).flatMap(e => e.dataset.lag.split(' '));
@@ -714,7 +1041,10 @@
       const maxSlot = Math.max(0, ...lags.map(t => +t.split(':')[1]));
       let slotMs = 0;
       const has = (list, n) => (list || '').split(' ').includes(String(n));
-      const tick = () => {
+      // show step i: what it lights, its caption, and where moving parts go
+      const render = i => {
+        pending.forEach(clearTimeout);
+        pending = [];
         slotMs = maxSlot ? SPEEDS[speed][0] / (maxSlot + 1.5) : 0;
         if (seq) {
           fig.querySelectorAll('[data-on]').forEach(e => {
@@ -747,7 +1077,7 @@
             if (+e.dataset.s === i) drawPart(e, false);
           });
         }
-        if (says && sayEl) sayEl.innerHTML = says[i] || '';  // built and escaped by guide.py
+        if (says && sayIdle) sayIdle.innerHTML = says[i] || '';  // built and escaped by guide.py
         // a sliding filter moves along to where this step reads, its lines with it
         if (svg.dataset.slideAt) {
           const at = svg.dataset.slideAt.split(' ').map(Number), by = +svg.dataset.slideBy;
@@ -759,11 +1089,22 @@
           e.style.transform = e.dataset.move.split('|')[i] || '';
         });
         fig.querySelectorAll('[data-track]').forEach(g => runDot(g, +(g.dataset.at.split('|')[i] || 0)));
+        shown = i;
+        stepButtons();
+      };
+      steps = n;
+      show = k => { render(k); i = k + 1; next = i < n ? tick : () => stop(true); };
+      const tick = () => {
+        render(i);
         i += 1;
-        // read each step, so a new speed applies from the next; a step with a line to read
-        // stays long enough to read it, at any speed
-        const ms = says ? Math.max(SPEEDS[speed][0], 3200) : SPEEDS[speed][0];
-        next = i < n ? tick : stop;
+        // read each step, so a new speed applies from the next. A step with a line to read stays
+        // as long as reading it takes at normal speed (about 270 words a minute, plus a second
+        // to look at the drawing), halved at fast and doubled at slow; never less than the step
+        const line = says ? (says[i - 1] || '').replace(/<[^>]*>/g, ' ') : '';
+        const words = line.split(/\s+/).filter(Boolean).length;
+        const read = (1200 + 220 * words) * SPEEDS[speed][0] / SPEEDS.normal[0];
+        const ms = Math.max(SPEEDS[speed][0], says ? read : 0);
+        next = i < n ? tick : () => stop(true);
         timer = setTimeout(next, i < n ? ms : 2 * ms);
       };
       tick();
@@ -775,32 +1116,58 @@
       else if (state === 'run') { clearTimeout(timer); setState('pause'); }
       else { setState('run'); next(); }
     });
-    ctl.querySelector('.d-stop').addEventListener('click', () => stop());
+    ctl.querySelector('.d-stop').addEventListener('click', () => stop(true));
     return { stop };
   }
   const flowCtl = document.getElementById('d-flowctl');
-  const popupFlow = makeFlow(fig, flowCtl);
-  function stopFlow() { popupFlow.stop(); }
+  const popupFlow = makeFlow(fig, flowCtl, document.getElementById('d-say'));
+  function stopFlow() { popupFlow.stop(true); }  // and clear the caption: it belongs to the panel
   const primerFlows = Array.from(document.querySelectorAll('.p-fig[data-flow]'))
     .map(f => makeFlow(f, f.querySelector('.d-flowctl')));
-  primer.addEventListener('close', () => primerFlows.forEach(f => f.stop()));
-  if (glossary) glossary.addEventListener('close', () => primerFlows.forEach(f => f.stop()));
+  primer.addEventListener('close', () => primerFlows.forEach(f => f.stop(true)));
+  if (glossary) glossary.addEventListener('close', () => primerFlows.forEach(f => f.stop(true)));
 
   function setText(id, text) {
     document.getElementById(id).textContent = text || '';
   }
 
-  function open(id) {
+  // A panel opened from a glossary entry's "Used in": its Close says "Back to" that entry and
+  // returns there, as the glossary's does over the primer; Esc and a click outside do the same.
+  // Previous or Next moves on from the entry, and Close is Close again.
+  const closeBtn = document.getElementById('d-close');
+  let backTo = null;
+  function showBack(slug, term) {
+    backTo = slug;
+    closeBtn.textContent = 'Back to ' + term;
+  }
+  function dismiss() {  // the reader closes the panel: back to the entry it came from, if any
+    if (!backTo) { close(); return; }
+    const slug = backTo;
+    if (history.state && history.state.fromGloss === slug) { history.back(); return; }  // the step before
+    dlg.addEventListener('close', () => { if (openGlossary) openGlossary(slug, null); }, { once: true });
+    quietClose(dlg);
+  }
+  function open(id, from) {  // `from`: the glossary entry it was opened from, a step of its own
     const d = DATA[id];
     const card = document.querySelector('.card[data-id="' + id + '"]');
     if (!d || !card) return;
+    closeBtn.textContent = 'Close';
+    backTo = null;
     current = id;
     const svg = card.querySelector('svg').outerHTML.split('arr-' + id).join('arr-' + id + '-big');
     stopFlow();
     document.getElementById('d-fig').innerHTML = svg;
     fig.querySelectorAll('.hl, .on').forEach(e => e.classList.remove('hl', 'on'));  // the page's
     flowCtl.hidden = !+fig.querySelector('svg').dataset.steps;
-    speedBox.hidden = flowCtl.hidden;  // the speed only where there is a step-through
+    if (d.say && d.say.length) fig.dataset.say = JSON.stringify(d.say);
+    else delete fig.dataset.say;
+    // the card's drawing is hidden from screen readers (the card's text names it); here it is
+    // the panel's figure, named, and described by its reading
+    const big = fig.querySelector('svg');
+    big.removeAttribute('aria-hidden');
+    big.setAttribute('role', 'img');
+    big.setAttribute('aria-label', 'Diagram: ' + d.name);
+    if (d.read) big.setAttribute('aria-describedby', 'd-read'); else big.removeAttribute('aria-describedby');
     // Family, any further families, then the year; a line breaks only between names.
     const kicker = document.getElementById('d-kicker');
     const keep = t => { const s = document.createElement('span'); s.className = 'nw'; s.textContent = t; return s; };
@@ -816,6 +1183,8 @@
     document.getElementById('d-cap').innerHTML = d.captionHtml;  // escaped by guide.py
     setText('d-note', d.note);
     document.getElementById('d-note').hidden = !d.note;
+    document.getElementById('d-uses-text').innerHTML = d.usedForHtml;  // escaped by guide.py
+    document.getElementById('d-uses').hidden = !d.usedForHtml;
     document.getElementById('d-summary').innerHTML = d.summaryHtml;
     document.getElementById('d-read').innerHTML = d.readHtml;
     setText('d-objective', (d.objectiveNote ? ', ' + d.objectiveNote : '') +
@@ -823,15 +1192,17 @@
     // the objective's tag, linked to the glossary entry that defines it
     const objEl = document.getElementById('d-objective');
     if (d.objectiveGloss) {
-      const b = document.createElement('button');
-      b.type = 'button';
+      const b = document.createElement('a');  // a link, as a term in the text is
       b.className = 'g-link';
+      b.href = '#glossary-' + d.objectiveGloss;
       b.dataset.g = d.objectiveGloss;
       b.textContent = d.objective;
       objEl.prepend(b);
     } else {
       objEl.prepend(d.objective);
     }
+    // an architecture's objective is a typical one, one of several it could train toward
+    document.getElementById('d-scope').hidden = d.scheme;
     document.getElementById('d-read-wrap').hidden = !d.read;
     setMenu(false);
     refreshMenu();
@@ -877,15 +1248,16 @@
       });
       rel.append(row);
     }
-    if (d.aka.length) {  // other names and close variants, which search also finds
+    // other names, variants, and related methods, a row each (search finds them all)
+    for (const [label, names] of d.names) {
       const row = document.createElement('p');
       const k = document.createElement('span');
       k.className = 'k';
-      k.textContent = 'Variants and other names:';
-      row.append(k, ' ' + d.aka.join(', '));
+      k.textContent = label + ':';
+      row.append(k, ' ' + names.join(', '));
       rel.append(row);
     }
-    document.getElementById('d-rel-wrap').hidden = !d.related.length && !d.aka.length;
+    document.getElementById('d-rel-wrap').hidden = !d.related.length && !d.names.length;
     const hasEl = document.getElementById('d-has');
     hasEl.textContent = d.has;
     hasEl.hidden = !d.has;
@@ -898,6 +1270,10 @@
       a.target = '_blank';
       a.rel = 'noopener';
       a.textContent = p.title;
+      const tab = document.createElement('span');  // said to screen readers only
+      tab.className = 'sr-only';
+      tab.textContent = ' (opens in a new tab)';
+      a.append(tab);
       const src = document.createElement('span');
       src.className = 'src';
       src.textContent = p.source;
@@ -916,7 +1292,13 @@
     dlg.classList.add('instant');  // the fade only eases in while scrolling
     moreBelow();
     requestAnimationFrame(() => requestAnimationFrame(() => dlg.classList.remove('instant')));
-    try { history.replaceState(null, '', '#' + id); } catch (e) {}
+    if (!routing && (opening || from)) push('#' + id, Object.assign({ under: null }, from));
+    else if (!routing) {  // Previous or Next: the same step, no longer the entry's panel
+      const st = Object.assign({}, history.state);
+      delete st.fromGloss;
+      delete st.fromTerm;
+      try { history.replaceState(st, '', '#' + id); } catch (e) {}
+    }
   }
 
   function close() {
@@ -932,24 +1314,26 @@
 
   dlg.addEventListener('close', () => {
     stopFlow();
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    if (dlg._quiet) dlg._quiet = false;
+    else if (!leave()) try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
     const card = current && document.querySelector('.card[data-id="' + current + '"]');
     if (card) card.focus();
   });
-  dlg.addEventListener('click', e => { if (e.target === dlg) close(); });
+  dlg.addEventListener('click', e => { if (e.target === dlg) dismiss(); });
   // the fade above the buttons shows while more of the panel lies below
   function moreBelow() {
     dlg.classList.toggle('more', dlg.scrollTop + dlg.clientHeight < dlg.scrollHeight - 2);
   }
   dlg.addEventListener('scroll', moreBelow, { passive: true });
   // "More below" in a dialog's bottom bar scrolls it on by most of what shows
-  document.querySelectorAll('.nav-more').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.nav-more:not(.nav-top)').forEach(b => b.addEventListener('click', () => {
     const box = b.closest('dialog');
     box.scrollBy({ top: box.clientHeight * 0.8, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }));
   window.addEventListener('resize', () => { if (dlg.open) moreBelow(); });
   dlg.addEventListener('cancel', e => {
     if (!menu.hidden) { e.preventDefault(); setMenu(false); dlBtn.focus(); }
+    else if (backTo) { e.preventDefault(); dismiss(); }  // Esc: back to the entry, as Close
   });
   dlg.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !menu.hidden) { e.preventDefault(); e.stopPropagation(); setMenu(false); dlBtn.focus(); }
@@ -963,13 +1347,19 @@
   });
   document.getElementById('d-prev').addEventListener('click', () => step(-1));
   document.getElementById('d-next').addEventListener('click', () => step(1));
-  document.getElementById('d-close').addEventListener('click', close);
+  closeBtn.addEventListener('click', dismiss);
   cards.forEach(c => c.addEventListener('click', () => open(c.dataset.id)));
 
   // The theme: the page follows the reader's setting until the button is used, then
   // remembers the choice for that reader.
   const root = document.documentElement;
   const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  // the keyboard's first stop, shown only when focused: past the header and its legend to the
+  // first diagram showing (or to the search, when filters hide them all)
+  document.getElementById('skip').addEventListener('click', () => {
+    const first = Array.from(document.querySelectorAll('.card')).find(c => c.offsetParent);
+    (first || document.getElementById('f-search')).focus();
+  });
   const themeBtn = document.getElementById('theme');
   function themeNow() {
     const t = root.getAttribute('data-theme');
@@ -991,10 +1381,40 @@
   labelTheme();
 
   apply();
-  const hash = decodeURIComponent(location.hash.slice(1));
-  if (hash && DATA[hash]) open(hash);
-  else if (hash === 'primer' || hash.startsWith('primer-')) openPrimer(hash.slice(7));
-  else if (glossary && (hash === 'glossary' || hash.startsWith('glossary-'))) openGlossary(hash.slice(9));
+  // Show what the address and its step name: the view on top, and any left beneath it. On
+  // loading the page, and on Back or Forward.
+  function viewOf(h) {
+    if (!h) return null;
+    if (DATA[h]) return 'panel';
+    if (glossary && (h === 'glossary' || h.startsWith('glossary-'))) return 'glossary';
+    if (h === 'primer' || h.startsWith('primer-')) return 'primer';
+    return null;
+  }
+  function route() {
+    routing = true;
+    try {
+      const st = history.state || {};
+      const h = decodeURIComponent(location.hash.slice(1));
+      const want = {};
+      [st.under ? decodeURIComponent(st.under.slice(1)) : '', h].forEach(x => { const v = viewOf(x); if (v) want[v] = x; });
+      if (glossary && glossary.open && !want.glossary) quietClose(glossary);
+      if (primer.open && !want.primer) quietClose(primer);
+      // a link straight to the glossary or primer leaves any panel open beneath it as it is
+      const keep = !('under' in st) && (want.glossary || want.primer);
+      if (want.panel) { if (!dlg.open || current !== want.panel) open(want.panel); }
+      else if (dlg.open && !keep) quietClose(dlg);
+      // a sheet left beneath keeps its place; the one on top goes to the section named
+      // a sheet returned to (left open beneath, or already at that place) keeps its scroll
+      const moveTo = (sheet, x) => !sheet.open || (viewOf(h) === viewOf(x) && sheet._hash !== '#' + h);
+      if (want.primer && moveTo(primer, want.primer)) openPrimer(want.primer.slice(7));
+      if (want.glossary && moveTo(glossary, want.glossary)) openGlossary(want.glossary.slice(9));
+      if (want.panel && st.fromGloss && viewOf(h) === 'panel') showBack(st.fromGloss, st.fromTerm || '');
+    } finally {
+      routing = false;
+    }
+  }
+  window.addEventListener('popstate', route);
+  route();
 
   // The Poster menu: its button opens it, Escape, Tab or a click outside closes it, and the
   // arrow keys move through it

@@ -5,3 +5,6 @@ __pycache__/
 .DS_Store
 # proofs: a local working folder for revision.py, proposals.py and palettes.py
 /proofs/
+# tests: pytest's cache (.cache/ in older versions)
+.pytest_cache/
+.cache/

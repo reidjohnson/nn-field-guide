@@ -65,6 +65,10 @@ GAP = 0.9  # from a line's end (or an arrow's tip) to the outline it meets
 HEAD = 5.4  # arrowhead size, the same on every arrow
 DOT = 1.7  # radius of the dot where a gate meets a state arrow
 BEND = 6.0  # radius of every bend in a skip connection or return arrow
+# the bend of an LSTM's or GRU's gate hook, tighter than BEND: its legs are only a few units
+# long, and at BEND the corner swallows them, so the hook reads as a soft hump rather than a
+# diagonal and a drop
+HOOK_BEND = 1.5
 REACH = 16.0  # from the cell centres to the straight run of every connector: one shape for all
 DIAG = math.sqrt(0.5)  # connectors leave and meet cells at 45 degrees
 
@@ -201,6 +205,11 @@ def figure_palette_css() -> str:
     )
 
 
+# The link styles, kept few (six today) so the legend stays learnable: each is a different kind
+# of thing a line carries, not a different layer or model. Add one only with very good reason:
+# when no existing style can say what a line does, and the cell marks and wiring can't either
+# (a convolution's lines are learned weights like a dense layer's; its cells and windows say
+# the rest).
 LINKS = OrderedDict(
     [
         # in legend order: plain lines, then arrows (with the gate after the arrow it acts on),
@@ -223,6 +232,45 @@ LINKS = OrderedDict(
 
 # Relations between panels, written once on the more specific panel; the page shows each from
 # both ends. key -> (label on the panel that lists it, label on the panel it points to)
+# the names a panel lists besides its own, each under its own label, all found by search:
+# other names for the same thing; versions of the design drawn; and distinct methods that
+# only resemble it, which don't share the drawing or the objective
+NAME_LISTS = {
+    "aka": "Also called",
+    "variants": "Variants",
+    "related_methods": "Related methods",
+}
+
+# what a glossary entry's list of panels means, and its label: the networks that have or train
+# with it (attention, a gate); the panels that are one (a generative model); or, for an idea
+# every model touches (inductive bias), the panels whose text discusses it, which lint checks
+USED_AS = {"uses": "Used in", "examples": "Examples", "discussed": "Discussed in"}
+
+
+def panel_text(a: dict) -> str:
+    """Everything a panel says in words: caption, summary, reading, objective, note, and its
+    step-through's captions, as plain lowercase text."""
+    dg = a.get("diagram") or {}
+    say = list(dg.get("say") or [])
+    if isinstance(dg.get("flow"), list):
+        say += [st.get("say", "") for st in dg["flow"]]
+    parts = ("caption", "summary", "read", "objective_math", "note")
+    return (
+        " ".join(str(a.get(k) or "") for k in parts).replace("`", "").lower()
+        + " "
+        + (" ".join(map(str, say)).replace("`", "").lower())
+    )
+
+
+def mentions(e: dict, a: dict) -> bool:
+    """Whether a panel's text names a glossary entry, in any of the forms it links by."""
+    text = panel_text(a)
+    return any(
+        re.search(r"(?<![\w-])" + re.escape(f.lower()) + r"(?![\w-])", text)
+        for f in e.get("match") or [e["term"]]
+    )
+
+
 RELATIONS = {
     "kind_of": ("Kind of", "Kinds"),
     "builds_on": ("Builds on", "Led to"),
@@ -399,6 +447,8 @@ class Diagram:
     steps: dict = field(default_factory=dict)  # cell -> its step in the data flow (flow_steps)
     seq: list = field(default_factory=list)  # a hand-written step-through: (from, to) cell sets
     say: list = field(default_factory=list)  # a line of text per hand-written step (glossary)
+    alt: str = ""  # a figure's description, read by screen readers (`alt`)
+    names: list = field(default_factory=list)  # (cells, letter): a row's name (see layout)
     hold: list = field(default_factory=list)  # per hand-written step: cells kept lit (clamped)
     slide: tuple = ()  # cells that move as one, with their lines: (keys, step, offset per step)
     ghosts: bool = False  # at rest, faint copies of the sliding cells at each place they go
@@ -490,8 +540,8 @@ def mark_lines(cell: Cell) -> list:
 
 
 def assign_mark_dirs(d) -> None:
-    """Inputs keep their stem below and outputs above whenever all of the cell's links lead
-    the other way. Otherwise (a ring, or a link leaving on the stem's side) the stem points
+    """Inputs keep their stem below and outputs above whenever none of the cell's links leads
+    that way (a link from the side, as flow matching's velocity, leaves it be). Otherwise (a ring, or a link leaving on the stem's side) the stem points
     away from the links, snapped to the nearest of up, down, left, or right."""
     for c in d.cells.values():
         mark = group_mark(c)
@@ -511,7 +561,7 @@ def assign_mark_dirs(d) -> None:
             L = math.hypot(vx, vy)
             if L:
                 vecs.append((vx / L, vy / L))
-        if all(vx * default[0] + vy * default[1] < -0.05 for vx, vy in vecs):
+        if all(vx * default[0] + vy * default[1] < 0.05 for vx, vy in vecs):  # none on its side
             c.mark_dir = default
             continue
         sx, sy = sum(v[0] for v in vecs), sum(v[1] for v in vecs)
@@ -552,13 +602,16 @@ def build_diagram(arch_id: str, spec: dict) -> Diagram:
     shift = W / 2 - (lo + hi) / 2
     if abs(shift) > 0.05:
         d = layout(arch_id, dict(spec, shift=shift))
+    d.alt = spec.get("alt", "")  # what a screen reader hears for the figure
     flow = spec.get("flow", True)  # optional: true (the default) follows the lines
+    d.say = list(spec.get("say", []))  # a panel's caption for each step of a flow it doesn't write
     if isinstance(flow, list):
         d.seq = [
             (cells_of(d, st.get("from", [])), cells_of(d, st["to"]), st.get("within", False))
             for st in flow
         ]
-        d.say = [st.get("say", "") for st in flow] if any("say" in st for st in flow) else []
+        if any("say" in st for st in flow):  # a written flow's captions sit on its steps
+            d.say = [st.get("say", "") for st in flow]
         d.hold = [cells_of(d, st.get("hold", [])) for st in flow]
         if spec.get("focus"):  # what the figure is about: at rest, everything else is faded
             fo = spec["focus"]
@@ -810,6 +863,13 @@ def layout(arch_id: str, spec: dict) -> Diagram:
         order.append((gid, r))
 
     d = Diagram(arch_id, cells, groups)
+    for gid, r in order:  # `name`: a letter for the row (see the YAML's notes): at the left of
+        if r.get("name"):  # its first cell, or with `name_at: between`, centered among its cells
+            at = r.get("name_at")  # between: centered among them; each: at the left of every cell
+            if at == "each":
+                d.names += [([k], r["name"]) for k in groups[gid]]
+            else:
+                d.names.append((groups[gid] if at == "between" else groups[gid][:1], r["name"]))
     prev = None
     for gid, r in order:
         if "connect" in r:
@@ -935,8 +995,8 @@ def chain(d: Diagram, keys: list, mode: str):
 def gates(d: Diagram, src: list, dst: list, mode=True):
     """Dotted line from each input to the state arrow arriving at its position. With mode
     "recurrent" (LSTM, GRU) the gate is also set by the previous state: a second dotted line
-    leaves that cell at 45 degrees and comes down onto the dot from above, with BEND as its
-    bend. A selective SSM's gate (mode true) reads the input alone."""
+    leaves that cell at 45 degrees and comes down onto the dot from above, with HOOK_BEND as
+    its bend. A selective SSM's gate (mode true) reads the input alone."""
     ordered = sorted(dst, key=lambda k: d.cells[k].x)
     srcs = sorted(src, key=lambda k: d.cells[k].x)
     for idx in range(1, len(ordered)):
@@ -971,7 +1031,7 @@ def gates(d: Diagram, src: list, dst: list, mode=True):
             q0 = (A.x + sx * DIAG * s, A.y - DIAG * s)
             q2 = (mx, my - DOT - GAP)
             q1 = (mx, q0[1] - abs(mx - q0[0]))
-            path, samples = rounded_path([q0, q1, q2], BEND)
+            path, samples = rounded_path([q0, q1, q2], HOOK_BEND)
             d.segs.append(
                 Seg(
                     "gate",
@@ -1094,6 +1154,9 @@ def loop(d: Diagram, lp: dict):
 
 
 FEED_LEN = 2 * STEM  # a line that feeds a whole row: from the cell's edge (less GAP), twice a stem
+# a whole-row loop's way back, in shares of the draw time: down to the bottom line by LOOP_DOWN,
+# then along it beneath the inputs by LOOP_END (past 1: it runs on into the step's pause)
+LOOP_DOWN, LOOP_END = 0.4, 1.45
 
 
 def whole_loop(d: Diagram, lp: dict):
@@ -1137,14 +1200,33 @@ def whole_loop(d: Diagram, lp: dict):
             d.segs.append(Seg("_flow", [], src=src, dst=via.key))
             y_prev = via.y + extent(via, 0.0, 1.0) + GAP
         via = vias[-1]
-        y_out = y_prev
-        path, samples = rounded_path([(x_run, y_out), (x_run, y_bot), (ins[0].x, y_bot)], BEND)
-        d.segs.append(Seg("loop", samples, d=path, near=near, ends=(via.key,)))
+        back, near_back, ends_back = [(x_run, y_prev)], near, (via.key,)
     else:
-        path, samples = rounded_path(
-            [(outs[0].x, y_top), (x_run, y_top), (x_run, y_bot), (ins[0].x, y_bot)], BEND
+        back, near_back, ends_back = (
+            [(outs[0].x, y_top), (x_run, y_top)],
+            tuple(ga) + tuple(gb),
+            (),
         )
-        d.segs.append(Seg("loop", samples, d=path, near=tuple(ga) + tuple(gb)))
+    # the way back in two parts: down to the bottom line, quickly, then along it beneath the
+    # inputs at the pace of ViT's patch feed, each input's arrowhead showing as it passes
+    x_split = x_run - 2 * BEND  # past the corner, so the bend keeps its radius
+    path, samples = rounded_path(back + [(x_run, y_bot), (x_split, y_bot)], BEND)
+    d.segs.append(
+        Seg("loop", samples, d=path, near=near_back, ends=ends_back, t0=0.0, t1=LOOP_DOWN)
+    )
+    d.segs.append(
+        Seg(
+            "loop",
+            [(x_split, y_bot), (ins[0].x, y_bot)],
+            near=near_back,  # it ends at neither cell: it carries on the line that does
+            t0=LOOP_DOWN,
+            t1=LOOP_END,
+        )
+    )
+    reach = {
+        c.key: LOOP_DOWN + (LOOP_END - LOOP_DOWN) * (x_split - c.x) / (x_split - ins[0].x)
+        for c in ins
+    }
     for c in outs:
         bot = c.y - extent(c, 0.0, -1.0) - GAP
         d.segs.append(  # leaves with its output, which the step-through lights it with (dst)
@@ -1174,8 +1256,16 @@ def whole_loop(d: Diagram, lp: dict):
         d.segs.append(  # with the stem below it, part of the input's stem: lit with the input
             Seg("loop", [(c.x, y_bot), (c.x, top)], ends=(c.key,), dst=c.key, late=True)
         )
-        d.segs.append(  # its arrowhead, which shows once the way back reaches it
-            Seg("loop", [(c.x, top + 1.0), (c.x, top)], ends=(c.key,), arrow=True, t0=0.85, t1=1.0)
+        t = reach[c.key]
+        d.segs.append(  # its arrowhead, which shows as the way back passes beneath it
+            Seg(
+                "loop",
+                [(c.x, top + 1.0), (c.x, top)],
+                ends=(c.key,),
+                arrow=True,
+                t0=t,
+                t1=t + 0.03,
+            )
         )
 
 
@@ -1496,26 +1586,39 @@ def primer_live(d: Diagram) -> str:
     and a button for new weights."""
     ins = sorted((c for c in d.cells.values() if c.kind == "input"), key=lambda c: c.x)
     sliders = "".join(
+        # named without its shown value, which the slider itself reports (so it isn't read twice)
         f'<label><span>Input {i + 1}</span><input type="range" min="0" max="1" step="0.01" '
-        f'value="0.5" data-c="{c.key}"><output>0.50</output></label>'
+        f'value="0.5" data-c="{c.key}" aria-label="Input {i + 1}"><output aria-hidden="true">0.50</output></label>'
         for i, c in enumerate(ins)
     )
+    # the readout first, right under the drawing it explains, so a tap on a phone shows its
+    # numbers in view rather than below the sliders
     return (
-        f'<div class="p-live-ctl">{sliders}<p class="p-outs"><span>Outputs</span> '
+        '<div class="p-live-ctl">'
+        '<p class="p-read" aria-live="polite">Point at a unit or a line to see its numbers.</p>'
+        f'{sliders}<p class="p-outs"><span>Outputs</span> '
         '<output class="p-out"></output>'
-        '<button type="button" class="p-new">Randomize weights</button></p>'
-        '<p class="p-read" aria-live="polite">Point at a unit or a line to see its numbers.</p></div>'
+        '<button type="button" class="p-new">Randomize weights</button></p></div>'
     )
 
 
 PRIMER_FLOW = (  # a primer figure's Step through button and stop, as on the popup's drawing
     '<div class="d-flowctl" data-state="idle"><button class="d-stop" type="button" '
     'aria-label="Stop" title="Stop"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" '
-    'width="10" height="10" rx="1.5"/></svg></button><button class="d-play" type="button"><svg '
+    'width="10" height="10" rx="1.5"/></svg></button>'
+    '<button class="d-back" type="button" aria-label="Previous step" title="Previous step">'
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="2.5" height="12" rx="1"/>'
+    '<path d="M18 6v12l-8.5-6z"/></svg></button>'
+    '<button class="d-play" type="button"><svg '
     'class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>'
     '<svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6" width="4" '
     'height="12" rx="1"/><rect x="13.5" y="6" width="4" height="12" rx="1"/></svg>'
-    "<span>Step through</span></button></div>"
+    "<span>Step through</span></button>"
+    '<button class="d-fwd" type="button" aria-label="Next step" title="Next step">'
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="15.5" y="6" width="2.5" height="12" rx="1"/>'
+    '<path d="M6 6v12l8.5-6z"/></svg></button>'
+    '<button class="d-rate" type="button" aria-label="Step-through speed: 1×" '
+    'title="Step-through speed">1×</button></div>'
 )
 
 
@@ -1618,7 +1721,12 @@ def slide_ghosts(d: Diagram, drawing: str, marker: str) -> str:
 
 
 def primer_figure(
-    d: Diagram, labels: list, live: int = 0, flow: bool = False, tips: dict | None = None
+    d: Diagram,
+    labels: list,
+    live: int = 0,
+    flow: bool = False,
+    tips: dict | None = None,
+    alt: str = "",
 ) -> str:
     """A panel's drawing for the primer, with its rows named at the left, bottom to top. With
     `live` (a seed), the drawing runs: each line carries a weight and each unit lights by its
@@ -1660,11 +1768,7 @@ def primer_figure(
         below = (
             '<div class="p-fig-ctl">'
             + (PRIMER_FLOW if flow else "")
-            + (
-                '<p class="p-say" aria-live="polite">Press Step through to watch it work.</p>'
-                if flow and d.say
-                else ""
-            )
+            + ('<p class="p-say" aria-live="polite"></p>' if flow and d.say else "")
             + (
                 '<p class="p-read" aria-live="polite">Point at a part to see what it does.</p>'
                 if tips
@@ -1674,7 +1778,7 @@ def primer_figure(
         )
     return (
         f'<figure class="{cls}"{data}><svg{wider} viewBox="{fmt(x0)} 0 '
-        f'{fmt(x1 - x0)} {fmt(H)}" role="img" aria-label="{html.escape(", ".join(labels))}"{steps}>'
+        f'{fmt(x1 - x0)} {fmt(H)}" role="img" aria-label="{html.escape(alt or d.alt or ", ".join(labels))}"{steps}>'
         f'<defs>{marker_def(marker, "currentColor")}</defs><g class="p-names">{names}</g>'
         f"{slide_ghosts(d, drawing, marker) if d.ghosts else ''}{drawing}{notes}</svg>"
         + (primer_live(d) if live else "")
@@ -1730,11 +1834,6 @@ def figure_diagrams(doc: dict) -> dict:
 
 PLANE_BOX = 136.0  # a plane figure's frame: a square this wide, in the drawing's units
 PLANE_X0, PLANE_Y0 = 12.0, 143.0  # its bottom left corner
-PLANE_SHAPES = [
-    "circle",
-    "square",
-    "triangle",
-]  # a plane figure's groups of points (clusters), in order
 
 
 def plane_xy(p: dict, u: float, v: float) -> tuple:
@@ -1751,24 +1850,12 @@ def plane_steps(spec: dict) -> list:
 
 
 def plane_shape(k: int, x: float, y: float, size: float) -> str:
-    """A plane figure's mark for group `k` at (x, y): a circle, square, or triangle, about
-    `size` across its middle; -1, not yet in a group, is a small dot."""
+    """A plane figure's point in a group at (x, y), a circle `size` in radius; -1, not yet in a
+    group, is a small hollow dot. Which group is told by where it lies, not by its mark: the
+    territories' bounds, and the lines to its center as it joins one."""
     if k < 0:
         return f'<circle class="pl-none" cx="{fmt(x)}" cy="{fmt(y)}" r="{fmt(size * 0.55)}"/>'
-    kind = PLANE_SHAPES[k]
-    if kind == "circle":
-        return f'<circle cx="{fmt(x)}" cy="{fmt(y)}" r="{fmt(size)}"/>'
-    if kind == "square":
-        h = size * 0.88
-        return (
-            f'<rect x="{fmt(x - h)}" y="{fmt(y - h)}" width="{fmt(2 * h)}" height="{fmt(2 * h)}"/>'
-        )
-    r = size * 1.25  # a triangle, pointing up, about as heavy as the circle
-    pts = " ".join(
-        f"{fmt(x + r * math.cos(math.radians(a)))},{fmt(y - r * math.sin(math.radians(a)) + r * 0.2)}"
-        for a in (90, 210, 330)
-    )
-    return f'<polygon points="{pts}"/>'
+    return f'<circle cx="{fmt(x)}" cy="{fmt(y)}" r="{fmt(size)}"/>'
 
 
 def plane_clip(poly: list, a: tuple, b: float) -> list:
@@ -1830,12 +1917,16 @@ def plane_arrow(x1: float, y1: float, x2: float, y2: float, cls: str, extra: str
 def plane_figure(fid: str, spec: dict) -> str:
     """A glossary figure drawn on the plane of two inputs rather than as a network (XOR,
     cosine similarity, clustering). `points` are [u, v, value]: on or off (filled or hollow),
-    or the index of the group they end in (its shape). Each step (`flow`) can show:
+    or the index of the group they end in. Each step (`flow`) can show:
     a `line` that turns and shifts to each place listed ([center u, v, angle]), cases `wrong`
     (ringed), a lasting `keep` line with a label, a `band` (corners) where the answer is on,
-    a `paint` (each point's group, -1 for none), the `centers` (larger shapes) moved to new
-    places, with `bounds: true` the lines between their territories,
-    the `arrow` turned to an angle, and a `note` (a readout in the corner). At rest the figure
+    `names` label the points (a name, or [name, "left"]); a step's `pairs` ([from, to] point
+    indexes) draw an arrow between two points from that step on. A step can also show
+    a `paint` (each point's group, -1 for none), the `centers` (green) moved to new places,
+    with `bounds: true` the lines between their territories and with `joins: true`, at each
+    step that paints, a line from each point to its center and a ring on each that changed,
+    the `arrow` turned to an angle, and a `note` (a readout in the corner). With `project`
+    ({at, angle, from}) every point drops onto that line from that step on. At rest the figure
     shows how it ends: the points in their groups, the centers in place, the kept lines, the
     band, and the arrow where it starts."""
     p, steps = spec["plane"], plane_steps(spec)
@@ -1889,12 +1980,23 @@ def plane_figure(fid: str, spec: dict) -> str:
             + "</g>"
         )
     ox, oy = plane_xy(p, 0, 0)
-    for vec in p.get("vectors", []):  # fixed arrows from the origin, shown throughout
+    for vec in p.get("vectors", []):  # fixed arrows from the origin: shown from step `from` on
         x, y = plane_xy(p, *vec["to"])
-        parts.append(plane_arrow(ox, oy, x, y, "pl-vec"))
+        u, v = vec["to"]
+        if vec.get("guides") is not None:  # dashed to both axes, each number where it lands
+            parts.append(
+                f'<g class="pl-guides" data-on="{on_from(vec["guides"])}">'
+                f'<path d="M{fmt(x)} {fmt(y)}V{fmt(oy)}M{fmt(x)} {fmt(y)}H{fmt(ox)}"/>'
+                f'<text class="pl-label" x="{fmt(x)}" y="{fmt(oy + 10)}" text-anchor="middle">{u:g}</text>'
+                f'<text class="pl-label" x="{fmt(ox - 4)}" y="{fmt(y + 3)}" text-anchor="end">{v:g}</text>'
+                "</g>"
+            )
+        parts.append(
+            plane_arrow(ox, oy, x, y, "pl-vec", f' data-on="{on_from(vec.get("from", 0))}"')
+        )
         if vec.get("label"):
             parts.append(
-                f'<text class="pl-label" x="{fmt(x + vec.get("dx", 4))}" '
+                f'<text class="pl-note" x="{fmt(x + vec.get("dx", 4))}" '
                 f'y="{fmt(y + vec.get("dy", 0))}">{html.escape(vec["label"])}</text>'
             )
     arrow = p.get("arrow")  # an arrow from the origin that turns: drawn where it starts
@@ -1983,6 +2085,27 @@ def plane_figure(fid: str, spec: dict) -> str:
 
         if p.get("bounds"):  # where each center's territory meets the next (Voronoi)
             by_key(lambda i: (tuple(map(tuple, places[i])), ()), bounds_svg, "pl-bounds")
+        if p.get("joins") and paints:  # who joins whom, only as they join: at rest no lines,
+            for i, st in enumerate(steps):  # which would read as a graph's edges
+                held = paints[i] or []
+                if "paint" not in st or all(k < 0 for k in held):
+                    continue
+                lines = ""
+                for (u, v, _), k in zip(p["points"], held):
+                    if k >= 0:
+                        (x1, y1), (x2, y2) = plane_xy(p, u, v), plane_xy(p, *places[i][k])
+                        lines += (
+                            f'<line x1="{fmt(x1)}" y1="{fmt(y1)}" x2="{fmt(x2)}" y2="{fmt(y2)}"/>'
+                        )
+                parts.append(f'<g class="pl-joins" data-on="{i}" data-gone="">{lines}</g>')
+                was = (paints[i - 1] if i else None) or [-1] * len(held)
+                for (u, v, _), a, b in zip(p["points"], was, held):
+                    if 0 <= a != b:  # it changed sides: ringed
+                        x, y = plane_xy(p, u, v)
+                        parts.append(
+                            f'<circle class="pl-moved" cx="{fmt(x)}" cy="{fmt(y)}" r="7.5" '
+                            f'data-on="{i}" data-gone=""/>'
+                        )
     for j, (u, v, val) in enumerate(p.get("points", [])):
         x, y = plane_xy(p, u, v)
         grouped = isinstance(val, int) and not isinstance(val, bool)
@@ -2003,11 +2126,29 @@ def plane_figure(fid: str, spec: dict) -> str:
         # in a group: its shape, one drawn for each it takes (none yet: a small hollow dot), each
         # shown at the steps it holds, and at rest the group it ends in
         held = [ps[j] if ps else -1 for ps in paints] or [val] * len(steps)
+        move = ""
+        pr = p.get("project")
+        if pr:  # from step `from` on, each point drops onto the line through `at` at `angle`
+            (cu, cv), a = pr["at"], math.radians(pr["angle"])
+            t = (u - cu) * math.cos(a) + (v - cv) * math.sin(a)
+            qx, qy = plane_xy(p, cu + t * math.cos(a), cv + t * math.sin(a))
+            moves = "|".join(
+                f"translate({fmt(qx - x) if i >= pr['from'] else 0}px, "
+                f"{fmt(qy - y) if i >= pr['from'] else 0}px)"
+                for i in range(len(steps))
+            )
+            move = f' data-move="{moves}"'
+            parts.append(  # the way it drops, shown as it does
+                f'<line class="pl-drop" x1="{fmt(x)}" y1="{fmt(y)}" x2="{fmt(qx)}" y2="{fmt(qy)}" '
+                f'data-on="{on_from(pr["from"])}" data-gone=""/>'
+            )
         for k in sorted(set(held) | {val}):
             on = " ".join(str(i) for i, h in enumerate(held) if h == k)
             rest = "" if k == val else ' data-gone=""'
-            parts.append(f'<g class="pl-grp" data-on="{on}"{rest}>{plane_shape(k, x, y, 4.2)}</g>')
-    if centers:  # each group's center: its shape, larger, with a cross
+            parts.append(
+                f'<g class="pl-grp" data-on="{on}"{rest}{move}>{plane_shape(k, x, y, 4.2)}</g>'
+            )
+    if centers:  # each group's center, green: what is learned
         for k, (u, v) in enumerate(centers):
             x, y = plane_xy(p, u, v)
             moves = []
@@ -2015,9 +2156,26 @@ def plane_figure(fid: str, spec: dict) -> str:
                 px, py = plane_xy(p, *pl[k])
                 moves.append(f"translate({fmt(px - x)}px, {fmt(py - y)}px)")
             parts.append(
-                f'<g class="pl-center" data-move="{"|".join(moves)}">{plane_shape(k, x, y, 8.0)}'
-                f'<path d="M{fmt(x - 2.5)} {fmt(y)}H{fmt(x + 2.5)}M{fmt(x)} {fmt(y - 2.5)}'
-                f'V{fmt(y + 2.5)}"/></g>'
+                f'<g class="pl-center" data-move="{"|".join(moves)}">{plane_shape(k, x, y, 5.5)}</g>'
+            )
+    pts = p.get("points", [])
+    for j, name in enumerate(p.get("names", [])):  # each point's name, at its right (or left)
+        name, side = (name, "right") if isinstance(name, str) else name
+        x, y = plane_xy(p, pts[j][0], pts[j][1])
+        tx, anchor = (x + 7, "start") if side == "right" else (x - 7, "end")
+        parts.append(
+            f'<text class="pl-name" x="{fmt(tx)}" y="{fmt(y + 3)}" text-anchor="{anchor}">'
+            f"{html.escape(name)}</text>"
+        )
+    for i, st in enumerate(steps):  # an arrow from one point to another, from this step on
+        for a, b in st.get("pairs", []):
+            (x1, y1), (x2, y2) = plane_xy(p, *pts[a][:2]), plane_xy(p, *pts[b][:2])
+            d = math.hypot(x2 - x1, y2 - y1)
+            ux, uy = (x2 - x1) / d, (y2 - y1) / d
+            parts.append(
+                f'<line class="pl-pair" x1="{fmt(x1 + ux * 6)}" y1="{fmt(y1 + uy * 6)}" '
+                f'x2="{fmt(x2 - ux * 7)}" y2="{fmt(y2 - uy * 7)}" marker-end="url(#arr-{fid})" '
+                f'data-on="{on_from(i)}"/>'
             )
     for i, st in enumerate(steps):
         if st.get("note"):
@@ -2045,13 +2203,13 @@ def plane_figure(fid: str, spec: dict) -> str:
         f'<svg style="width: {FIGURE_SCALE * (x1 - x0):.0f}px; max-width: 100%" '
         f'viewBox="{fmt(x0)} {fmt(top)} {fmt(x1 - x0)} {fmt(y1 - top)}" role="img" '
         f'aria-label="{html.escape(p.get("alt", ""))}" data-steps="{n}"{SEQ_ATTR}>'
-        f'<defs><clipPath id="{clip}"><rect x="{fmt(fx0)}" y="{fmt(fy1)}" '
+        f'<defs>{marker_def(f"arr-{fid}", "currentColor")}<clipPath id="{clip}"><rect x="{fmt(fx0)}" y="{fmt(fy1)}" '
         f'width="{fmt(fx1 - fx0)}" height="{fmt(fy0 - fy1)}"/></clipPath></defs>'
         f'<rect class="pl-frame" x="{fmt(fx0)}" y="{fmt(fy1)}" width="{fmt(fx1 - fx0)}" '
         f'height="{fmt(fy0 - fy1)}"/>{axes}{"".join(parts)}</svg>'
         '<div class="p-fig-ctl">'
         + PRIMER_FLOW
-        + '<p class="p-say" aria-live="polite">Press Step through to watch it work.</p></div></figure>'
+        + '<p class="p-say" aria-live="polite"></p></div></figure>'
     )
 
 
@@ -2097,8 +2255,8 @@ def bspline_knots(values: list) -> tuple:
 
 
 def chart_fn(cv: dict):
-    """A chart curve's function, by name: relu, sigmoid, gauss (c, w), sine (a, f, p), or
-    bspline (values)."""
+    """A chart curve's function, by name: relu, sigmoid, gauss (c, w), sine (a, f, p),
+    bspline (values), or poly (coef, from the constant up)."""
     fn = cv["fn"]
     if fn == "relu":
         return lambda x: max(0.0, x)
@@ -2112,6 +2270,8 @@ def chart_fn(cv: dict):
         ) + cv.get("b", 0.0)
     if fn == "bspline":
         return lambda x: bspline(cv["values"], x)
+    if fn == "poly":  # coefficients from the constant up
+        return lambda x: sum(c * x**k for k, c in enumerate(cv["coef"]))
     raise ValueError(f"chart curve: no function '{fn}'")
 
 
@@ -2254,9 +2414,11 @@ def chart_figure(fid: str, spec: dict) -> str:
         first = next((i for i, x in enumerate(xs) if x is not None), 0)
         shown = dot.get("steps", range(first, n))  # the steps it shows at, `steps` if given
         # the input it reads, a yellow mark where its guide meets the bottom, and the output
-        # it gives, a red dot on the curve, as the panels color an input and an output
+        # it gives, a red dot on the curve, as the panels color an input and an output; with
+        # `tone: neutral` (a weight against its loss) an ink dot, and no mark
+        neutral = " neutral" if dot.get("tone") == "neutral" else ""
         parts.append(
-            f'<g class="cv-dot" data-on="{" ".join(map(str, shown))}" data-gone="" '
+            f'<g class="cv-dot{neutral}" data-on="{" ".join(map(str, shown))}" data-gone="" '
             f'data-track="{track}" data-at="{"|".join(map(str, at))}" '
             f'data-axes="{fmt(fx0)},{fmt(fy0)}"><line class="cv-guide"/><line class="cv-guide"/>'
             f'<circle class="cv-foot" r="2.8"/><circle class="cv-out" r="3.6"/></g>'
@@ -2290,7 +2452,7 @@ def chart_figure(fid: str, spec: dict) -> str:
         f'height="{fmt(fy0 - fy1)}"/>{axes}{"".join(parts)}</svg>'
         '<div class="p-fig-ctl">'
         + PRIMER_FLOW
-        + '<p class="p-say" aria-live="polite">Press Step through to watch it work.</p></div></figure>'
+        + '<p class="p-say" aria-live="polite"></p></div></figure>'
     )
 
 
@@ -2298,18 +2460,31 @@ BARS_W = 30.0  # a bar chart figure's bar width, and the gap between bars is a t
 
 
 def bars_figure(fid: str, spec: dict) -> str:
-    """A glossary figure drawn as bars (softmax): each step sets every bar's `values` and the
-    `scale` that turns them into heights (drawing units per unit), labels each bar with its
-    value, and the bars grow or shrink to it. At rest it shows the last step."""
+    """A glossary figure drawn as bars (softmax): each step sets every bar's `values` (null for
+    none yet) and the `scale` that turns them into heights (drawing units per unit), labels
+    each bar with its value, and the bars grow or shrink to it; a step's `pick` marks one bar
+    as drawn. Bars are red, as outputs, unless `tone` is neutral (a measure, not a unit's value)
+    or hidden (a hidden layer's values, green as its units are). At rest it shows the last step."""
     b, steps = spec["bars"], spec.get("flow", [])
     n, names = len(steps), b["names"]
     gap = BARS_W / 3
-    zero, top, bottom = b.get("zero", 112.0), 14.0, 136.0
+    zero, top = b.get("zero", 112.0), 14.0
+    # the names sit just under the lowest point any bar or its value reaches, at any step
+    hang = 0.0
+    sc = 1.0
+    for st in steps:
+        sc = st.get("scale", sc)
+        hang = max([hang] + [-(v * sc) for v in st.get("values") or [] if v is not None])
+    if b.get("inputs"):
+        ms = b["inputs"].get("scale", 15.0)
+        first = b["inputs"].get("values") or steps[0]["values"]
+        hang = max([hang] + [-(v * ms) for v in first if v is not None])
+    bottom = zero + (hang + 11 if hang > 0 else 0) - 2  # the names' line, 13 below it
     x_left, parts = 22.0, []
     inputs = b.get("inputs")
     if inputs:  # the first step's values as a small chart at the left, an arrow on to the bars
         mw, mg, ms = 10.0, 4.0, inputs.get("scale", 15.0)
-        first = steps[0]["values"]
+        first = b["inputs"].get("values") or steps[0]["values"]
         for k, v in enumerate(first):
             x, h = x_left + k * (mw + mg), v * ms
             y0, y1 = (zero - h, zero) if h >= 0 else (zero, zero - h)
@@ -2337,23 +2512,33 @@ def bars_figure(fid: str, spec: dict) -> str:
         f'<path class="pl-cross" d="M{fmt(x_left - 6)} {fmt(zero)}H{fmt(x_left + len(names) * (BARS_W + gap) - gap + 6)}"/>'
     ]
     vals = [st.get("values") for st in steps]
-    scales = [st.get("scale", 1.0) for st in steps]
+    scales = plane_carry(steps, "scale", 1.0)  # a step that only marks a draw keeps the scale
     cur, hs = vals[0], []
     for v, s in zip(vals, scales):
         cur = v or cur
-        hs.append([x * s for x in cur])
+        hs.append([x * s if x is not None else 0.0 for x in cur])
+    shown = plane_carry(steps, "values", [None] * len(names))
+    tone = f" {b['tone']}" if b.get("tone") in ("neutral", "hidden") else ""
     for k, name in enumerate(names):
         x = x_left + k * (BARS_W + gap)
         moves = "|".join(f"scale(1, {h[k]:.3f})" for h in hs)
+        for i, st in enumerate(steps):  # the bar a step draws, marked above it
+            if st.get("pick") == k:
+                parts.append(
+                    f'<text class="pl-note" x="{fmt(x + BARS_W / 2)}" y="{fmt(zero - hs[i][k] - 14)}" '
+                    f'text-anchor="middle" data-on="{i}" data-gone="">drawn</text>'
+                )
+        on = [i for i in range(n) if shown[i][k] is not None]
+        lit = f' data-on="{" ".join(map(str, on))}"' if len(on) < n else ""  # none yet: unseen
         parts.append(
-            f'<rect class="cv-bar" x="{fmt(x)}" y="{fmt(zero - 1)}" width="{fmt(BARS_W)}" height="1" '
+            f'<rect class="cv-bar{tone}"{lit} x="{fmt(x)}" y="{fmt(zero - 1)}" width="{fmt(BARS_W)}" height="1" '
             f'data-move="{moves}" style="transform-origin: {fmt(x)}px {fmt(zero)}px; '
             f'transform: scale(1, {hs[-1][k]:.3f})"/>'
             f'<text class="pl-axis" x="{fmt(x + BARS_W / 2)}" y="{fmt(bottom + 13)}" '
             f'text-anchor="middle">{html.escape(name)}</text>'
         )
         for i, h in enumerate(hs):
-            v = (vals[i] or [])[k] if vals[i] else None
+            v = shown[i][k]  # each step's value, carried from the step before if it sets none
             if v is None:
                 continue
             y = (
@@ -2375,19 +2560,42 @@ def bars_figure(fid: str, spec: dict) -> str:
         f'<defs>{marker_def(f"arr-{fid}", "currentColor")}</defs>{"".join(parts)}</svg>'
         '<div class="p-fig-ctl">'
         + PRIMER_FLOW
-        + '<p class="p-say" aria-live="polite">Press Step through to watch it work.</p></div></figure>'
+        + '<p class="p-say" aria-live="polite"></p></div></figure>'
     )
 
 
+NAV_TOP = (  # in the glossary's bottom bar once its index has scrolled away: back to it
+    '<button class="nav-more nav-top" type="button" title="Back to the index">'
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 14.5l6-6 6 6"/></svg>Index</button>'
+)
 NAV_MORE = (  # in a dialog's bottom bar while more lies below: says so (the scroll bar may be hidden)
     '<button class="nav-more" type="button" tabindex="-1" aria-hidden="true" title="Scroll down">'
-    '<svg viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></svg>More below</button>'
+    '<svg viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></svg><span>More below</span></button>'
 )
 
 
 GLOSSARY_ICON = (  # an open book
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.3 5.3 7.6 4.8 4.5 5v12.5'
     'c3.1-.2 5.8.3 7.5 1.5 1.7-1.2 4.4-1.7 7.5-1.5V5c-3.1-.2-5.8.3-7.5 1.5zM12 6.5V19"/></svg>'
+)
+
+
+GLOSSARY_UNLINKED = ("Input and output", "Link", "Unit")  # too common in the entries to link there
+# the basics the primer teaches, left unlinked in a panel's summary and reading, where linking
+# every use made the text look stippled and hid the links that carry meaning; the glossary and
+# the primer still link them
+PANEL_UNLINKED = (
+    "Unit",
+    "Layer",
+    "Weight",
+    "Position",
+    "Vector",
+    "Link",
+    "Input and output",
+    "Parameters",
+    "Head",
+    "Token",
+    "Class",
 )
 
 
@@ -2459,6 +2667,32 @@ def glossary_used(doc: dict, e: dict) -> list:
     return []
 
 
+def glossary_table(e: dict) -> str:
+    """An entry's table: a caption, a header row, and a row per kind of model, its first cell
+    naming the row. On a phone each row stacks into a block, every cell under its column's
+    name; the roles keep it a table to a screen reader, which a block display would lose."""
+    t = e["table"]
+    cap = f'gt-{glossary_slug(e["term"])}'
+    head = '<th role="columnheader"><span class="sr-only">Model</span></th>' + "".join(
+        f'<th scope="col" role="columnheader">{prose_html(c)}</th>' for c in t["cols"]
+    )
+    body = "".join(
+        f'<tr role="row"><th scope="row" role="rowheader">{prose_html(r[0])}</th>'
+        + "".join(
+            f'<td role="cell" data-col="{html.escape(c, quote=True)}">{prose_html(v)}</td>'
+            for c, v in zip(t["cols"], r[1:])
+        )
+        + "</tr>"
+        for r in t["rows"]
+    )
+    return (
+        f'<table class="g-table" role="table" aria-labelledby="{cap}">'
+        f'<caption id="{cap}">{prose_html(t["caption"])}</caption>'
+        f'<thead role="rowgroup"><tr role="row">{head}</tr></thead>'
+        f'<tbody role="rowgroup">{body}</tbody></table>'
+    )
+
+
 def glossary_html(doc: dict, diagrams: dict) -> str:
     """The glossary: a dialog the page's glossary button opens. Its index of terms by group,
     then each term: its first sentence as a lead, a drawing that steps through how it works
@@ -2466,32 +2700,47 @@ def glossary_html(doc: dict, diagrams: dict) -> str:
     diagrams = {**diagrams, **figure_diagrams(doc)}
     arch = doc["architectures"]
     entries = glossary_entries(doc)
-    out = []
+    out = ['<nav class="g-nav" aria-label="Index">']  # a landmark, so a screen reader can skip it
     for g, name in GLOSSARY_GROUPS.items():
         terms = [e for e in entries if e.get("group") == g]
-        if terms:
+        if terms:  # each group a list named by its label, so a screen reader says how many
             out.append(
-                f'<div class="g-group"><p class="g-gname">{name}</p><p class="g-index">'
+                f'<div class="g-group"><p class="g-gname" id="gi-{g}">{name}</p>'
+                f'<ul class="g-index" aria-labelledby="gi-{g}">'
                 + "".join(
-                    f'<a href="#glossary-{glossary_slug(e["term"])}">{html.escape(e["term"])}</a>'
+                    f'<li><a href="#glossary-{glossary_slug(e["term"])}">{html.escape(e["term"])}</a></li>'
                     for e in terms
                 )
-                + "</p></div>"
+                + "</ul></div>"
             )
+    out.append("</nav>")
     group = None
     for e in entries:
         if e.get("group") != group:
             group = e.get("group")
-            out.append(f'<p class="g-sec">{GLOSSARY_GROUPS.get(group, "")}</p>')
+            out.append(f'<h3 class="g-sec">{GLOSSARY_GROUPS.get(group, "")}</h3>')
         out.append(
-            f'<h3 id="glossary-{glossary_slug(e["term"])}" tabindex="-1">'
-            f'{html.escape(e["term"])}</h3>'
+            f'<h4 id="glossary-{glossary_slug(e["term"])}" tabindex="-1">'
+            # its name links to itself: a click brings it to the top, its address in the URL
+            f'<a class="g-self" href="#glossary-{glossary_slug(e["term"])}">'
+            f'{html.escape(e["term"])}</a></h4>'
         )
+        # the definition, then the rest: one paragraph, or split around the figure when there is one
         lead, rest = glossary_split(e)
-        out.append(f'<p class="g-lead">{prose_html(lead)}</p>')
+        if not e.get("figure"):
+            lead, rest = " ".join(t for t in (lead, rest) if t), ""
+        # other entries it mentions link to them, the first use of each, as in the panels; not
+        # itself, nor the few that nearly every entry mentions
+        lead_html, rest_html = link_terms(
+            doc,
+            [prose_html(lead), prose_html(rest)],
+            "glossary",
+            (e["term"], *GLOSSARY_UNLINKED, *e.get("unlink", [])),
+        )
+        out.append(f'<p class="g-lead">{lead_html}</p>')
         if e.get("figure"):
             spec = doc.get("figures", {}).get(e["figure"], {})
-            out.append(
+            fig_html = (
                 plane_figure(e["figure"], spec)
                 if "plane" in spec
                 else (
@@ -2506,34 +2755,47 @@ def glossary_html(doc: dict, diagrams: dict) -> str:
                     )
                 )
             )
+            # its Step through names the entry, so it isn't one of many alike to a screen reader
+            out.append(
+                fig_html.replace(
+                    '<button class="d-play" type="button">',
+                    f'<button class="d-play" type="button" '
+                    f'aria-describedby="glossary-{glossary_slug(e["term"])}">',
+                )
+            )
         if rest:
-            out.append(f"<p>{prose_html(rest)}</p>")
+            out.append(f"<p>{rest_html}</p>")
+        if e.get("table"):
+            out.append(glossary_table(e))
         used = glossary_used(doc, e)
+        label = USED_AS[e.get("used_as", "uses")]
         if e.get("used_in_text"):
             out.append(
-                f'<p class="g-used"><span class="k">Used in:</span> '
+                f'<p class="g-used"><span class="k">{label}:</span> '
                 f'{prose_html(e["used_in_text"])}</p>'
             )
         elif used:
             out.append(
-                '<p class="g-used"><span class="k">Used in:</span> '
-                + ", ".join(
-                    f'<button type="button" data-open="{p}">'
-                    f'{html.escape(arch[p]["name"])}</button>'
-                    for p in used
+                f'<p class="g-used"><span class="k">{label}:</span> '
+                + " ".join(  # each name keeps its comma
+                    f'<span class="g-nw"><button type="button" data-open="{p}">'
+                    f'{html.escape(arch[p]["name"])}</button>{"," if k < len(used) - 1 else ""}</span>'
+                    for k, p in enumerate(used)
                 )
                 + "</p>"
             )
         if e.get("sources"):
             out.append(
                 f'<p class="g-used g-src"><span class="k">Source:</span> '
-                f'{"; ".join(glossary_source(doc, e, c) for c in e["sources"])}</p>'
+                f'{keep_punct("; ".join(glossary_source(doc, e, c) for c in e["sources"]))}</p>'
             )
     return (
         '<dialog id="glossary" aria-labelledby="g-title"><div class="p-wrap">'
-        '<h2 id="g-title" tabindex="-1">Glossary</h2>'
-        f'{"".join(out)}</div><div class="p-nav">{NAV_MORE}<button class="btn" type="button" '
-        'id="g-close">Close</button></div></dialog>'
+        '<div class="g-head"><h2 id="g-title" tabindex="-1">Glossary</h2>'
+        '<select id="g-order" aria-label="Order of terms" autocomplete="off"><option value="topic">By topic</option>'
+        '<option value="az">A to Z</option></select></div>'
+        f'{"".join(out)}</div><div class="p-nav">{NAV_MORE}{NAV_TOP}<button class="btn" '
+        'type="button" id="g-close">Close</button></div></dialog>'
     )
 
 
@@ -2564,7 +2826,8 @@ def glossary_source(doc: dict, e: dict, c) -> str:
         )
     return (
         f'<a href="{html.escape(c["url"])}" target="_blank" rel="noopener" '
-        f'title="{html.escape(c["title"])}">{html.escape(c["cite"])}</a>'
+        f'title="{html.escape(c["title"])}">{html.escape(c["cite"])}'
+        f"{NEW_TAB}</a>"
     )
 
 
@@ -2595,18 +2858,28 @@ def objective_gloss(doc: dict, objective: str) -> str:
     return ""
 
 
-LINK_OPEN = '<button type="button" class="g-link"'  # a glossary term linked from a panel
+# a glossary term linked from running text: a real link to its entry, as Wikipedia's are, so a
+# term of several words wraps between them like the text around it (a button can't: it sits on
+# one line as a block, leaving a gap at the end of the line before it); page.js opens the entry
+# over the page, and a new tab follows the address
+LINK_OPEN = '<a class="g-link"'
 
 
-def link_terms(doc: dict, parts: list, pid: str = "") -> list:
+def link_terms(doc: dict, parts: list, pid: str = "", skip: tuple = ()) -> list:
     """Panel prose (HTML) with the first use of each glossary term made a link to its entry:
-    its earliest use, in any of its forms, once per panel across all its parts, and never inside
+    its earliest use, in any of its forms, once across all the parts given, and never inside
     a tag or a link already made. An entry with `link_in` links only in those panels (and in the
-    primer if it lists `primer`): `node`, which means something else in a seq2seq's drawing."""
+    primer if it lists `primer`): `node`, which means something else in a seq2seq's drawing.
+    An entry with `link_each` (groups of its forms) links each group on its own. Terms in
+    `skip` are left unlinked (an entry's own name, in its text)."""
     entries = [
-        e
+        # a paired entry (encoder and decoder) links each half at its own first use
+        {**e, "match": forms}
         for e in doc.get("glossary", [])
-        if e.get("link", True) and (not e.get("link_in") or (pid or "primer") in e["link_in"])
+        if e.get("link", True)
+        and e["term"] not in skip
+        and (not e.get("link_in") or (pid or "primer") in e["link_in"])
+        for forms in e.get("link_each") or [e.get("match", [e["term"]])]
     ]
     # entries with longer forms first, so "dense layer" is taken before "layer" can be
     entries.sort(key=lambda e: -max(len(f) for f in e.get("match", [e["term"]])))
@@ -2622,36 +2895,49 @@ def link_terms(doc: dict, parts: list, pid: str = "") -> list:
             depth, hit = 0, False
             for j, b in enumerate(bits):
                 if b.startswith("<"):
-                    if b.startswith("<button") or b.startswith("<i"):
+                    if b.startswith(("<button", "<i", "<a ")):
                         depth += 1
-                    elif b.startswith("</button") or b.startswith("</i"):
+                    elif b.startswith(("</button", "</i", "</a")):
                         depth -= 1
                     continue
                 if depth:
                     continue
-                # never right beside another term's link, where the two would read as one
-                prev_link = j > 0 and bits[j - 1].startswith("</button")
+                # never touching another term's link, where the two would read as one (a space
+                # between keeps them apart: each is underlined on its own)
+                prev_link = j > 0 and bits[j - 1].startswith(("</button", "</a"))
                 next_link = j + 1 < len(bits) and bits[j + 1].startswith(LINK_OPEN)
                 m = next(
                     (
                         m
                         for m in pat.finditer(b)
-                        if not (prev_link and not b[: m.start()].strip())
-                        and not (next_link and not b[m.end() :].strip())
+                        if not (prev_link and not b[: m.start()])
+                        and not (next_link and not b[m.end() :])
                     ),
                     None,
                 )
                 if m:
                     bits[j] = (
-                        b[: m.start()] + f'{LINK_OPEN} data-g="{slug}" '
-                        f'title="{html.escape(hint)}">{m.group(0)}</button>' + b[m.end() :]
+                        b[: m.start()] + f'{LINK_OPEN} href="#glossary-{slug}" data-g="{slug}" '
+                        f'title="{html.escape(hint)}">{m.group(0)}</a>' + b[m.end() :]
                     )
                     hit = True
                     break
             if hit:
                 parts[i] = "".join(bits)
                 break
-    return parts
+    return [keep_punct(p) for p in parts]
+
+
+KEEP_PUNCT = re.compile(
+    r'([(“‘]*)(<button type="button"[^>]*>(?:(?!</button>).)*</button>)([,.;:!?)”’]+)'
+)
+
+
+def keep_punct(s: str) -> str:
+    """A button in running text keeps the punctuation against it on its line: a browser may
+    break a line after a button (it sits inline as a block), leaving "token" and its comma apart.
+    """
+    return KEEP_PUNCT.sub(r'<span class="g-nw">\1\2\3</span>', s)
 
 
 def primer_html(doc: dict, diagrams: dict) -> str:
@@ -2681,6 +2967,7 @@ def primer_html(doc: dict, diagrams: dict) -> str:
                 sec.get("live", 0),
                 sec.get("flow", False),
                 sec.get("tips"),
+                sec.get("alt", ""),
             )
             if sec.get("figure")
             else ""
@@ -2772,6 +3059,55 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
     for aid in arch:
         if placed.count(aid) != 1:
             warns.append(f"{aid}: appears {placed.count(aid)} times in sections (expected once)")
+    greek = re.compile("[αβγδεζηθικλμνξπρστυφχψω]")  # lowercase Greek: a variable, so italic
+
+    def unmarked(where, text):
+        for t in (text if isinstance(text, list) else [text]):
+            bare = re.sub(r"`[^`]*`", "", str(t or ""))
+            if greek.search(bare):
+                warns.append(
+                    f"{where}: mark the Greek variable in `...` (italic): {bare.strip()[:60]}"
+                )
+
+    for aid, a in arch.items():
+        for k in ("summary", "read", "objective_math", "caption", "used_for"):
+            unmarked(f"{aid} {k}", a.get(k))
+        if not str(a.get("used_for", "")).strip():
+            warns.append(
+                f"{aid}: needs a used_for line (what it is used for, now or historically)"
+            )
+        dg = a.get("diagram", {})
+        unmarked(f"{aid} say", dg.get("say", []))
+        if isinstance(dg.get("flow"), list):
+            unmarked(f"{aid} say", [st.get("say") for st in dg["flow"]])
+    for e in doc.get("glossary", []):
+        unmarked(f"glossary '{e['term']}'", e.get("text"))
+        used_as = e.get("used_as", "uses")
+        if used_as not in USED_AS:
+            warns.append(f"glossary '{e['term']}': used_as is one of {list(USED_AS)}")
+        elif used_as == "discussed":  # a panel listed as discussing it must name it
+            for p in e.get("used_in", []):
+                if p in arch and not mentions(e, arch[p]):
+                    warns.append(
+                        f"glossary '{e['term']}': {p} is listed as discussing it but never names it"
+                    )
+        t = e.get("table")
+        if t is not None:  # a caption, and every row a name and one cell per column
+            if not t.get("caption") or not t.get("cols"):
+                warns.append(f"glossary '{e['term']}': a table needs a caption and cols")
+            for r in t.get("rows", []):
+                if len(r) != len(t.get("cols", [])) + 1:
+                    warns.append(
+                        f"glossary '{e['term']}': table row '{r[0]}' needs a name and one cell per column"
+                    )
+    for fid, f in doc.get("figures", {}).items():
+        unmarked(f"figure '{fid}'", [st.get("say") for st in f.get("flow", [])])
+    for aid in arch:  # a step-through's captions: one for each step, none empty
+        d = diagrams.get(aid)
+        if d is not None and d.say and (len(d.say) != flow_count(d) or not all(d.say)):
+            warns.append(f"{aid}: give each of its {flow_count(d)} steps a `say` line")
+        if d is not None and d.say and "Step through" not in arch[aid].get("read", ""):
+            warns.append(f"{aid}: end its reading with what Step through shows")
     for sec in doc.get("primer", []):
         if (
             sec.get("figure")
@@ -2779,6 +3115,10 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
             and sec["figure"] not in doc.get("figures", {})
         ):
             warns.append(f"primer: figure '{sec['figure']}' is not an architecture or a figure")
+        elif sec.get("figure") and not (
+            sec.get("alt") or doc.get("figures", {}).get(sec["figure"], {}).get("alt")
+        ):
+            warns.append(f"primer: give figure '{sec['figure']}' an `alt` for screen readers")
         for it in sec.get("key", []):
             if it.get("cell", "") not in CELLS and it.get("link", "") not in LINKS:
                 warns.append(f"primer: key item {it} names no cell or link type")
@@ -2835,13 +3175,20 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
                     warns.append(f"{aid}: related {rel} names unknown architecture '{t}'")
                 elif t == aid:
                     warns.append(f"{aid}: related {rel} names itself")
-        aka = a.get("aka", [])
-        if not isinstance(aka, list) or not all(isinstance(n, str) and n.strip() for n in aka):
-            warns.append(f"{aid}: aka must be a list of names")
-        else:
-            for n in aka:
+        seen = {}  # each name in one list only: another name, a variant, or a related method
+        for field in NAME_LISTS:
+            names = a.get(field, [])
+            if not isinstance(names, list) or not all(
+                isinstance(n, str) and n.strip() for n in names
+            ):
+                warns.append(f"{aid}: {field} must be a list of names")
+                continue
+            for n in names:
                 if n.lower() in (a["name"].lower(), str(a.get("full", "")).lower()):
-                    warns.append(f"{aid}: aka repeats its own name '{n}'")
+                    warns.append(f"{aid}: {field} repeats its own name '{n}'")
+                if n.lower() in seen:
+                    warns.append(f"{aid}: '{n}' is in both {seen[n.lower()]} and {field}")
+                seen[n.lower()] = field
         for o in a.get("also_objectives", []):
             if o not in OBJECTIVES:
                 warns.append(
@@ -2910,8 +3257,14 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
         t = e.get("term", "?")
         if slugs[glossary_slug(t)] > 1:
             warns.append(f"glossary: '{t}' is listed twice")
+        for u in e.get("unlink", []):
+            if not any(x["term"] == u for x in doc["glossary"]):
+                warns.append(f"glossary '{t}': unlink '{u}' is not an entry")
+        each = [f for g in e.get("link_each") or [] for f in g]
+        if any(f not in e.get("match", []) for f in each):
+            warns.append(f"glossary '{t}': link_each lists a form that is not in its match")
         for p in e.get("link_in", []):
-            if p not in arch and p != "primer":
+            if p not in arch and p not in ("primer", "glossary"):
                 warns.append(f"glossary '{t}': link_in '{p}' is not an architecture")
         for p in e.get("used_in", []):
             if p not in arch:
@@ -2921,9 +3274,13 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
         if {"plane", "chart", "bars"} & set(plane):
             if any(not st.get("say") for st in plane_steps(plane)):
                 warns.append(f"glossary '{t}': give each step of '{f}' a `say` line")
+            if not next(plane[k] for k in ("plane", "chart", "bars") if k in plane).get("alt"):
+                warns.append(f"glossary '{t}': give figure '{f}' an `alt` for screen readers")
             f = None  # drawn on a plane: the checks below are for networks
         if f and f not in figs:
             warns.append(f"glossary '{t}': no figure '{f}'")
+        elif f and not figs[f].alt:
+            warns.append(f"glossary '{t}': give figure '{f}' an `alt` for screen readers")
         elif f and len(figs[f].say) != len(figs[f].seq):
             warns.append(f"glossary '{t}': give each step of '{f}' a `say` line")
         if f and figs[f].slide and len(figs[f].slide[2]) != len(figs[f].seq):
@@ -3285,6 +3642,18 @@ def render_diagram(
             f'<line{tag("cell:" + kind)}{at(d.steps.get(key, last), (key,))}{late} x1="{fmt(p[0])}" y1="{fmt(p[1])}" x2="{fmt(q[0])}" y2="{fmt(q[1])}" '
             f'stroke="{ink}" stroke-width="1.1" stroke-linecap="round"{fade}/>'
         )
+    for keys, letter in d.names:  # in italic, as in the objective
+        cs = [d.cells[k] for k in keys]
+        if len(cs) > 1:  # centered among the row's cells
+            x, anchor = sum(c.x for c in cs) / len(cs), "middle"
+        else:  # at the cell's left
+            x, anchor = cs[0].x - half_of(CELLS[cs[0].kind], R) - 3.5, "end"
+        label = svg_text(
+            x, cs[0].y + 3.5, f"`{letter}`", "body", 10, ink, anchor=anchor, opacity=0.75
+        )
+        # lit and faded with its cells: in a step-through, and when their key entry is picked
+        step = at(d.steps.get(keys[0], 0), tuple(keys))
+        out.append(f'<g{tag("cell:" + cs[0].kind)}{step}>{label}</g>' if tags else label)
     return "".join(out)
 
 
@@ -3843,14 +4212,20 @@ def legend_html(cells: list, links: list) -> str:
             li(kind, k, CELLS[k]["label"] if kind == "cell" else LINKS[k]["label"])
             for kind, k in items
         )
+        gid = "lg-" + re.sub(r"[^a-z]+", "-", label.lower()).strip(
+            "-"
+        )  # names its list for a screen reader
         groups.append(
-            f'<div class="lg-group"><p class="lg-title">{html.escape(label)}</p>'
-            f"<ul>{lis}</ul></div>"
+            f'<div class="lg-group"><p class="lg-title" id="{gid}">{html.escape(label)}</p>'
+            f'<ul aria-labelledby="{gid}">{lis}</ul></div>'
         )
     return (
         f'<details class="legend" open><summary class="eyebrow">How to read the diagrams</summary>'
         f'<div class="legend-grid">{"".join(groups)}</div></details>'
     )
+
+
+NEW_TAB = '<span class="sr-only"> (opens in a new tab)</span>'  # a link's warning, heard only
 
 
 def credit_html(doc: dict) -> str:
@@ -3859,7 +4234,7 @@ def credit_html(doc: dict) -> str:
     if link and html.escape(link["text"]) in text:
         anchor = (
             f'<a href="{html.escape(link["url"])}" target="_blank" rel="noopener">'
-            f'{html.escape(link["text"])}</a>'
+            f'{html.escape(link["text"])}{NEW_TAB}</a>'
         )
         text = text.replace(html.escape(link["text"]), anchor, 1)
     return text
@@ -3870,7 +4245,7 @@ def repo_html(doc: dict) -> str:
     repo = doc.get("repo")
     if not repo:
         return ""
-    return f' · <a href="{html.escape(repo["url"])}" target="_blank" rel="noopener">{html.escape(repo["text"])}</a>'
+    return f' · <a href="{html.escape(repo["url"])}" target="_blank" rel="noopener">{html.escape(repo["text"])}{NEW_TAB}</a>'
 
 
 def source_button(doc: dict) -> str:
@@ -3880,7 +4255,7 @@ def source_button(doc: dict) -> str:
         return ""
     return (
         f'<a class="icon-btn" href="{html.escape(repo["url"])}" target="_blank" rel="noopener" '
-        f'aria-label="Source on GitHub" title="Source on GitHub">{CODE_ICON}</a>\n'
+        f'aria-label="Source on GitHub (opens in a new tab)" title="Source on GitHub">{CODE_ICON}</a>\n'
     )
 
 
@@ -3891,7 +4266,7 @@ def license_html(doc: dict) -> str:
         return ""
     return (
         f' · <a href="{html.escape(lic["url"])}" target="_blank" rel="license noopener">'
-        f'{html.escape(lic["text"])}</a>'
+        f'{html.escape(lic["text"])}{NEW_TAB}</a>'
     )
 
 
@@ -3913,13 +4288,13 @@ def save_html(mode: str) -> str:
     if mode == "standalone":
         items = "".join(
             f'<a role="menuitem" href="../{src}" target="_blank" rel="noopener">{fmt_}'
-            f"<span>{note}</span></a>"
+            f'<span class="sr-only">, </span><span>{note}</span>{NEW_TAB}</a>'
             for src, fmt_, note in POSTER_FILES
         )
     else:
         items = "".join(
             f'<button type="button" role="menuitem" data-file="{src}" data-name="{src}">{fmt_}'
-            f"<span>{note}</span></button>"
+            f'<span class="sr-only">, </span><span>{note}</span></button>'
             for src, fmt_, note in POSTER_FILES
         )
     status = (
@@ -4183,10 +4558,12 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
             )
             cards.append(
                 f'<button class="card" type="button" data-id="{pid}"{has_attr(a)}>{svg}'
+                # unseen punctuation, so a screen reader names the card as a sentence, not a run of words
                 f'<span class="row"><span class="name">{html.escape(a["name"])}</span>'
-                f'<span class="year">{a["year"]}</span></span>'
+                f'<span class="year"><span class="sr-only">, landmark paper </span>{a["year"]}<span class="sr-only">. </span></span></span>'
                 f'<span class="cap">{prose_html(caption)}</span>'
-                f'<span class="tag">{html.escape(a["objective"])}</span></button>'
+                f'<span class="tag"><span class="sr-only">. {"Objective" if a.get("scheme") else "Typical objective"}: </span>'
+                f'{html.escape(a["objective"])}</span></button>'
             )
             papers = [dict(paper_ref(p), title=p["title"], url=p["url"]) for p in a["papers"]]
             text = " ".join(
@@ -4200,7 +4577,8 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                     *a.get("also_objectives", []),
                     s["title"],
                     *(titles[f] for f in a.get("also", [])),
-                    *a.get("aka", []),
+                    *(n for f in NAME_LISTS for n in a.get(f, [])),
+                    a.get("used_for", ""),
                 ]
             )
             text = plain(text).lower()
@@ -4216,31 +4594,30 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 alsoTitles=[titles[f] for f in a.get("also", [])],
                 caption=plain(caption),
                 captionHtml=prose_html(caption),
+                say=[prose_html(t) for t in d.say],  # the step-through's captions, if any
                 objective=a["objective"],
                 objectiveGloss=objective_gloss(doc, a["objective"]),
                 has=has_text(a),
                 objectiveNote=a.get("objective_note", ""),
                 objectiveMath=math_html(a.get("objective_math") or OBJECTIVE_MATH[a["objective"]]),
                 alsoObjectives=a.get("also_objectives", []),
-                aka=a.get("aka", []),
+                # an architecture, not a way of training: its objective is one of several
+                scheme=bool(a.get("scheme")),
+                usedForHtml=prose_html(a.get("used_for", "")),  # what it is used for, now and once
+                # other names, variants, and related methods, each under its own label
+                names=[[label, a[f]] for f, label in NAME_LISTS.items() if a.get(f)],
                 related=related_of(doc, pid),
                 note=" ".join(notes[pid]) if pid in notes else "",
                 summary=plain(a["summary"].strip()),
                 read=plain(a.get("read", "").strip()),
-                # glossary terms link to their entries, the first use of each in the panel
-                **dict(
-                    zip(
-                        ("summaryHtml", "readHtml"),
-                        link_terms(
-                            doc,
-                            [
-                                prose_html(a["summary"].strip()),
-                                prose_html(a.get("read", "").strip()),
-                            ],
-                            pid,
-                        ),
-                    )
-                ),
+                # glossary terms link to their entries, the first use of each in the summary
+                # and again in the reading, which sits apart, under the drawing
+                summaryHtml=link_terms(
+                    doc, [prose_html(a["summary"].strip())], pid, PANEL_UNLINKED
+                )[0],
+                readHtml=link_terms(
+                    doc, [prose_html(a.get("read", "").strip())], pid, PANEL_UNLINKED
+                )[0],
                 papers=papers,
                 search=text,
                 key=dict(
@@ -4267,8 +4644,21 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
         links={k: [symbol_svg("link", k), LINKS[k]["label"]] for k in LINKS},
     )
     symbols_json = json.dumps(symbols, ensure_ascii=False).replace("</", "<\\/")
+    # the glossary for the page's search to suggest from: each entry's anchor, name, the forms
+    # that link to it, and its definition
+    gloss = [
+        dict(
+            g=glossary_slug(e["term"]),
+            t=e["term"],
+            f=[f.lower() for f in e.get("match", [])],
+            d=glossary_hint(e),
+        )
+        for e in glossary_entries(doc)
+    ]
+    gloss_json = json.dumps(gloss, ensure_ascii=False).replace("</", "<\\/")
     defs = f"<defs>{marker_def('arr-legend', 'currentColor')}</defs>"
     body = f"""<div class="page">
+<button class="skip" type="button" id="skip">Skip to the diagrams</button>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">{defs}</svg>
 <header class="masthead">
 <div class="titlebar"><h1>{html.escape(doc["title"])}</h1>
@@ -4285,9 +4675,10 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <select id="f-order" aria-label="Order">{ORDER_OPTIONS}</select>
 <select id="f-objective" aria-label="Training objective">{options}</select>
 <button class="icon-btn pack" type="button" id="f-pack" aria-pressed="false" aria-label="One section per row" title="One section per row"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3.5" width="18" height="4.5" rx="1.2"/><rect x="3" y="9.75" width="18" height="4.5" rx="1.2"/><rect x="3" y="16" width="18" height="4.5" rx="1.2"/></svg></button>
-<input id="f-search" type="search" placeholder="Search, e.g. memory" aria-label="Search diagrams">
+<input id="f-search" type="search" placeholder="Search, e.g. memory" aria-label="Search diagrams and the glossary">
 <span class="count" id="f-count" aria-live="polite"></span>
 </div>
+<p class="g-suggest" id="f-gloss" hidden></p>
 </nav>
 <main>
 <div id="groups">{"".join(sections_html)}</div>
@@ -4300,37 +4691,42 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 {glossary_html(doc, diagrams)}
 <dialog id="detail" aria-labelledby="d-name">
 <div class="d-wrap">
-<div class="d-side">
-<div class="d-keybox"><h3 class="d-label">Key</h3><div class="d-key" id="d-key"></div><p class="d-has" id="d-has" hidden></p></div>
-<div class="d-tools"><h3 class="d-label">Diagram</h3>
-<div class="d-flowctl" id="d-flowctl" data-state="idle" hidden><button class="d-stop" type="button" id="d-stop" aria-label="Stop" title="Stop"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button><button class="d-play" type="button" id="d-play"><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6" width="4" height="12" rx="1"/><rect x="13.5" y="6" width="4" height="12" rx="1"/></svg><span>Step through</span></button></div>
-<button class="d-more" type="button" id="d-more" aria-label="Diagram actions" title="Diagram actions" aria-haspopup="menu" aria-expanded="false" aria-controls="d-menu" data-credit="{html.escape(panel_credit(doc))}" data-ink="{INK_LIGHT}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
-<div class="d-menu" id="d-menu" role="menu" aria-label="Diagram actions" hidden>
-<button type="button" role="menuitem" data-act="svg">Save as SVG</button>
-<button type="button" role="menuitem" data-act="png">Save as PNG</button>
-<div class="d-speed" id="d-speed" role="group" aria-label="Step-through speed"><span>Speed</span><button type="button" role="menuitemradio" aria-checked="false" data-speed="slow">Slow</button><button type="button" role="menuitemradio" aria-checked="true" data-speed="normal">Normal</button><button type="button" role="menuitemradio" aria-checked="false" data-speed="fast">Fast</button></div>
-</div>
-</div>
-<div class="d-fig" id="d-fig"></div>
-<div class="d-read" id="d-read-wrap"><h3 class="d-label">Reading the diagram</h3><p id="d-read"></p></div>
-</div>
-<div class="d-text">
+<div class="d-text d-top">
 <div class="d-head"><p class="d-kicker" id="d-kicker"></p><button class="d-link" type="button" id="d-link" aria-label="Copy a link to this entry" title="Copy link" hidden><span class="d-link-done" aria-live="polite"></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7"/></svg></button></div>
 <h2 id="d-name" tabindex="-1"></h2>
 <p class="d-full" id="d-full"></p>
 <p class="d-cap" id="d-cap"></p>
 <p class="d-note" id="d-note" hidden></p>
+</div>
+<div class="d-side">
+<div class="d-tools"><h3 class="d-label">Diagram</h3>
+<button class="d-more" type="button" id="d-more" aria-label="Diagram actions" title="Diagram actions" aria-haspopup="menu" aria-expanded="false" aria-controls="d-menu" data-credit="{html.escape(panel_credit(doc))}" data-ink="{INK_LIGHT}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+<div class="d-menu" id="d-menu" role="menu" aria-label="Diagram actions" hidden>
+<button type="button" role="menuitem" data-act="svg">Save as SVG</button>
+<button type="button" role="menuitem" data-act="png">Save as PNG</button>
+</div>
+</div>
+<div class="d-fig" id="d-fig"></div>
+<div class="p-fig-ctl d-fig-ctl"><div class="d-flowctl" id="d-flowctl" data-state="idle" hidden><button class="d-stop" type="button" id="d-stop" aria-label="Stop" title="Stop"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button><button class="d-back" type="button" aria-label="Previous step" title="Previous step"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="2.5" height="12" rx="1"/><path d="M18 6v12l-8.5-6z"/></svg></button><button class="d-play" type="button" id="d-play"><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6" width="4" height="12" rx="1"/><rect x="13.5" y="6" width="4" height="12" rx="1"/></svg><span>Step through</span></button><button class="d-fwd" type="button" aria-label="Next step" title="Next step"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="15.5" y="6" width="2.5" height="12" rx="1"/><path d="M6 6v12l8.5-6z"/></svg></button><button class="d-rate" type="button" aria-label="Step-through speed: 1×" title="Step-through speed">1×</button></div>
+<p class="p-say d-say" id="d-say" aria-live="polite" hidden></p></div>
+<div class="d-keybox"><h3 class="d-label">Key</h3><div class="d-key" id="d-key"></div><p class="d-has" id="d-has" hidden></p></div>
+<div class="d-read" id="d-read-wrap"><h3 class="d-label">Reading the diagram</h3><p id="d-read"></p></div>
+</div>
+<div class="d-text d-body">
+<h3 class="d-over" id="d-over">Overview</h3>
 <p id="d-summary"></p>
+<div id="d-uses" hidden><h3>Used for</h3><p id="d-uses-text"></p></div>
 <div id="d-rel-wrap"><h3>Related</h3><div class="d-rel" id="d-rel"></div></div>
-<h3>Objective</h3><p id="d-objective"></p><p class="d-math" id="d-math"></p>
+<h3>Objective</h3><p id="d-objective"></p><p class="d-math" id="d-math"></p><p class="d-scope" id="d-scope" hidden>A typical way to train it, not always its landmark paper's exact loss; the same wiring can be trained toward <a href="#primer-goals">other goals</a>.</p>
 <h3>Papers</h3><ul class="d-papers" id="d-papers"></ul>
 </div>
-<div class="d-nav"><button class="nav-more" type="button" tabindex="-1" aria-hidden="true" title="Scroll down"><svg viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></svg>More below</button><button class="btn" type="button" id="d-prev">Previous</button>
+<div class="d-nav">{NAV_MORE}<button class="btn" type="button" id="d-prev">Previous</button>
 <button class="btn" type="button" id="d-next">Next</button>
 <button class="btn" type="button" id="d-close">Close</button></div>
 </div>
 </dialog>
 <script type="application/json" id="guide-data">{data_json}</script>
+<script type="application/json" id="gloss-data">{gloss_json}</script>
 <script type="application/json" id="guide-symbols">{symbols_json}</script>
 <script>
 {PAGE_JS}</script>"""
