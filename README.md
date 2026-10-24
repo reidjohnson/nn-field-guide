@@ -8,7 +8,7 @@ A reference chart of neural network architectures and training schemes, from the
 
 ## How to read it
 
-Each panel runs from input at the bottom to output at the top. A circle is one unit (in sequence models, one token's vector); a square is something bigger, such as an image patch or a whole network (a gray box). Faded cells and links take little or no part in the step shown. The poster's legend and the page explain every mark, and the page's glossary explains the terms (attention, convolution, gates, and more), several with a diagram that steps through how they work. In short, each cell's color and mark give its job:
+Each panel runs from input at the bottom to output at the top; a network that settles as a whole (Hopfield, Boltzmann) is drawn as a ring, and a graph network as its graph. A circle is one unit (in sequence models, one token's vector); a square is something bigger, such as an image patch or a whole network (a gray box). Faded cells and links take little or no part in the step shown. The poster's legend and the page explain every mark, and the page's glossary explains the terms (attention, convolution, gates, and more), several with a diagram that steps through how they work. In short, each cell's color and mark give its job:
 
 | Job | Color | Mark |
 |---|---|---|
@@ -43,6 +43,14 @@ python guide.py lint             # checks only
 
 Lint checks every drawing (lines that stray near cells, marks that touch, text too wide for its column) and the metadata. The "Last updated" date and the subtitle's count and range fill themselves in.
 
+Browser tests build the page and drive it in Chromium: every panel's and glossary figure's step-through, every glossary link, the Back and Forward paths between the page, its panels, the glossary, and the primer, and that the page reads in order by keyboard and to a screen reader. GitHub runs them on every push.
+
+```sh
+pip install -r requirements-dev.txt
+playwright install chromium      # once
+python -m pytest tests           # the environment's own pytest, not a global one
+```
+
 Three more scripts help weigh changes before making them. They write to `proofs/`, a local folder that isn't committed:
 
 ```sh
@@ -71,6 +79,22 @@ Add an entry under `architectures:` and list its id in a section. Rows run from 
         - {cell: attention, n: 4, connect: full, style: cross}   # dashed: weights set by similarity
         - {cell: attention, n: 4, connect: full, style: cross}
         - {cell: output, n: 4, connect: one, dim: [0, 1, 3]}
+```
+
+## Adding a glossary entry
+
+Add it under `glossary:` in `architectures.yaml`, in its group. Its first sentence is the definition, shown on hover wherever the term is linked; the panels' text and the other entries link to it by the forms under `match`. `used_in` lists the panels that use it and `sources` the works it comes from. A figure is optional: a small network drawn like a panel, or a plane, chart, or bar figure, each stepping through with a caption at every step, and each with an `alt`: one sentence saying what it shows, which is what a screen reader hears for it (lint asks for one). The comments above `figures:` and `glossary:` list every option.
+
+```yaml
+  - term: Pooling
+    group: operations
+    figure: pooling_max              # one of figures:
+    labels: [Feature map, Pooled]    # its rows, bottom to top
+    match: [pooling]
+    used_in: [cnn]
+    sources: ["Fukushima 1980"]      # a panel's cite links to that panel
+    text: >-
+      Shrinking a feature map by summarizing each small patch, usually by its largest value...
 ```
 
 ## Publishing
