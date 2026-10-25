@@ -79,7 +79,7 @@
 title: Neural Network Field Guide
 web_title: Neural Network Field Guide
 subtitle: "{count} architectures and training schemes, from {first} ({first_year}) to {last} ({last_year})."  # filled in from the panels: the count, the oldest and the newest
-reading: "Each diagram draws a network in miniature, input at the bottom and output at the top; one that settles as a whole is a ring, and a graph network is its graph. Most circles are neurons; in sequence models a column is a token, a circle its vector at one layer. A square is larger: an image patch, a matrix-valued state, a whole network, or an environment. Color and mark both show a cell’s role, so diagrams read without color. Faded parts play little role in the step shown. Parts repeated over positions, windows, copies, or passes share weights; layers, experts, encoders, and decoders drawn alike do not. Sections group by trait: wiring, dynamics, training, cost, or purpose. Years and methods follow landmark papers, not always the first."
+reading: "Each diagram draws a network in miniature, input at the bottom and output at the top; one that settles as a whole is a ring, and a graph network is its graph. Most circles are neurons; in sequence models a column is a token, a circle its vector at one layer. A square is larger: an image patch, a matrix-valued state, a whole network, or an environment. Color and mark both show a cell’s role, so diagrams read without color. Faded parts play little role in the step shown. Parts repeated over positions, windows, copies, or passes share weights; layers, experts, encoders, and decoders drawn alike do not. Sections group by trait: wiring, dynamics, training, cost, or purpose. Below each: its landmark year, not always the first, and typical training."
 
 # A short primer for readers new to neural networks, opened by the page's "?" button. Each
 # section is a title and its text (a blank line starts a new paragraph); `x` marks a variable,
@@ -3824,17 +3824,19 @@ architectures:
     variants: ["LLaDA"]
     related_methods: ["discrete diffusion"]
     summary: >-
-      Generates text by starting from a fully masked sequence and filling in tokens over
-      several parallel passes of a bidirectional Transformer. Masked diffusion for text goes
-      back to D3PM (2021) and was simplified by MDLM (2024); LLaDA (2025) trained it from
-      scratch at 8 billion parameters and showed it can be competitive with autoregressive
-      models of similar size. Other diffusion language models work in continuous embeddings
-      or with other kinds of noise.
+      Generates text by starting from a fully masked sequence and filling in tokens over several
+      parallel passes of a bidirectional Transformer. Its noise is masking rather than random
+      values: training hides tokens at a random rate, and generation reverses that, unmasking a few
+      at a time. Masked diffusion for text goes back to D3PM (2021) and was simplified by MDLM
+      (2024); LLaDA (2025) trained it from scratch at 8 billion parameters and showed it can be
+      competitive with autoregressive models of similar size. Other diffusion language models work
+      in continuous embeddings or with other kinds of noise.
     read: >-
-      Dashed inputs are still masked; the faded outputs are tokens already in place, which the
-      model keeps. Each pass fills in some of the masked tokens, and the line around the drawing
-      carries the whole result back in as the next input. Step through shows one pass, which
-      here fills in the most confident masked tokens; some samplers choose at random instead.
+      Dashed inputs are still masked, this model's form of noise; the faded outputs are tokens
+      already in place, which the model keeps. Each pass fills in some of the masked tokens, and
+      the line around the drawing carries the whole result back in as the next input. Step through
+      shows one pass, which here fills in the most confident masked tokens; some samplers choose at
+      random instead.
     papers:
       - {cite: Nie et al. 2025, title: "Large language diffusion models", url: "https://arxiv.org/abs/2502.09992"}
       - {cite: Austin et al. 2021, title: "Structured denoising diffusion models in discrete state-spaces", url: "https://arxiv.org/abs/2107.03006"}

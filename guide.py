@@ -88,7 +88,7 @@ GLYPH_INK_ON = {
     "red": "#FFFFFF",
     "gray": "#FFFFFF",
 }  # color -> ink of its inner marks where black reads poorly (white: 4.6:1 on red, 7.1:1 on gray)
-GLYPH_STROKE = 0.9  # stroke width of inner marks, at R0
+GLYPH_STROKE = 1.1  # stroke width of inner marks, at R0: the stems and ticks' weight, so every mark is one weight and every link another (LINE)
 INK_LIGHT, BG_LIGHT = "#1C1B19", "#FFFFFF"
 INK_DARK, BG_DARK = "#ECEBE6", "#161615"
 
