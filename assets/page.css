@@ -104,7 +104,7 @@ body { background: var(--bg); color: var(--ink); font-family: var(--body); font-
 .controls select, .controls input { font: 14px var(--body); color: var(--ink); background: var(--bg);
   border: 1px solid var(--rule); border-radius: 8px; padding: 7px 10px; min-width: 0; }
 .controls input { width: 12rem; max-width: 100%; }
-.count { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.count { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }  /* one piece: it wraps whole, if at all */
 .g-suggest { margin: 10px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   font-size: 13px; color: var(--muted); }
 .g-suggest[hidden] { display: none; }
@@ -115,7 +115,22 @@ body { background: var(--bg); color: var(--ink); font-family: var(--body); font-
 /* The pack toggle sits with the selects, before the search, so the count never moves it.
    Pressed, sections take a row each instead of sharing rows as on the poster. */
 .controls .pack { width: 32px; height: 32px; border-radius: 8px; color: var(--ink); }
+/* the signature toggle: its layers hidden until it is on, and while a drawing steps or a key
+   entry is picked, when the step or the entry is what the drawing shows */
+.sig { display: none; }
+.sig-on .sig { display: inline; }
+.sig-on :is(.d-fig, .p-fig).flow .sig, .sig-on svg.hl .sig { display: none; }
+/* the highlight's note, under the caption and in the panel's text, only while it is on */
+.card .snote, .d-snote { display: none; }
+.sig-on .card .snote { display: block; margin-top: 2px; font-size: 13px; line-height: 1.35; color: var(--muted); font-style: italic; text-wrap: pretty; }
+.sig-on .d-snote:not(:empty) { display: block; margin: 4px 0 14px; color: var(--muted); font-style: italic; }
+/* on the reading path, a card's place on it and what it adds */
+.card .pnote { display: block; margin-top: 4px; font-size: 13px; line-height: 1.35; color: var(--ink); text-wrap: pretty; }
+.card .pnote[hidden] { display: none; }
+.card .pnote.side { color: var(--muted); }  /* a side trip: optional, after its step */
+.card .pnum { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 2px; }
 .controls .pack[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); background: var(--rule); }
+.d-circle { margin: 0 0 10px; font-size: 14px; line-height: 1.4; color: var(--muted); text-wrap: pretty; }
 .controls .pack svg { width: 16px; height: 16px; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 /* text for screen readers only, such as a link's "(opens in a new tab)" */
@@ -214,6 +229,15 @@ dialog#primer[open], dialog#glossary[open] { display: block; }  /* as tall as a 
 .p-new { margin-left: auto; appearance: none; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg);
   color: var(--ink); font: 500 12px/1 var(--display); padding: 7px 10px; cursor: pointer; }
 .p-new:hover { border-color: var(--muted); }
+/* the training row: the loss as a number and a bar, and the button that trains one step */
+.p-loss { display: grid; grid-template-columns: 4.5em 3.6em 1fr auto; align-items: center; gap: 10px; margin: 2px 0 0; }
+.p-loss .p-loss-v { text-align: left; }
+.p-loss-bar { height: 6px; border-radius: 3px; background: var(--rule); overflow: hidden; }
+.p-loss-bar > span { display: block; height: 100%; width: 0; background: var(--ink); transition: width 0.25s; }
+.p-train { appearance: none; border: 1px solid var(--ink); border-radius: 8px; background: var(--bg);
+  color: var(--ink); font: 500 12px/1 var(--display); padding: 7px 10px; cursor: pointer; }
+.p-trained { min-height: 2.9em; margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .p-loss-bar > span { transition: none; } }
 /* pointing at a unit or a line: it and what feeds it stay, the rest fades; the sum is spelled out */
 :is(.p-live, .p-tips) .p-hits * { stroke: transparent; stroke-width: 10; fill: none; pointer-events: stroke; }
 :is(.p-live, .p-tips) [data-c] { cursor: default; }

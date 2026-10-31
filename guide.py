@@ -893,7 +893,8 @@ def layout(arch_id: str, spec: dict) -> Diagram:
         if "chain" in r:
             chain(d, groups[gid], r["chain"])
             if r.get("gate"):
-                gates(d, groups[r.get("from", prev)], groups[gid], r["gate"])
+                also = groups[r["gate_also"]] if r.get("gate_also") else None
+                gates(d, groups[r.get("from", prev)], groups[gid], r["gate"], also)
         prev = gid
     for a in spec.get("arcs", []):
         arc(d, a)
@@ -906,7 +907,25 @@ def layout(arch_id: str, spec: dict) -> Diagram:
     for fd in spec.get("feeds", []):
         feed(d, fd)
     assign_mark_dirs(d)
+    for gid, r in order:  # `fed`: inputs that were earlier outputs, their stems drawn as arrows
+        for i in r.get("fed", []):
+            fed_stem(d, groups[gid][i])
     return d
+
+
+def fed_stem(d: Diagram, key: str):
+    """An input that was an earlier output, fed back in (GPT's earlier tokens): its stem drawn
+    as an arrow into it, in the return arrow's style, in place of the plain stem. Part of the
+    input's stem, so it lights with the input (late)."""
+    c = d.cells[key]
+    _, q = mark_lines(c)[0]  # the stem's far end
+    ux, uy = c.mark_dir or (0.0, 1.0)
+    e = extent(c, ux, uy) + GAP  # its tip GAP from the outline, as every arrow's
+    p = (c.x + ux * e, c.y + uy * e)
+    c.marks = False
+    d.segs.append(
+        Seg("loop", [q, p], ends=(key,), opacity=c.opacity, arrow=True, dst=key, late=True)
+    )
 
 
 def pairs_for(d: Diagram, rule: str, src: list, dst: list, params: dict) -> list:
@@ -992,11 +1011,13 @@ def chain(d: Diagram, keys: list, mode: str):
             add_line(d, a, b, "state", arrow=True)
 
 
-def gates(d: Diagram, src: list, dst: list, mode=True):
+def gates(d: Diagram, src: list, dst: list, mode=True, also: list | None = None):
     """Dotted line from each input to the state arrow arriving at its position. With mode
-    "recurrent" (LSTM, GRU) the gate is also set by the previous state: a second dotted line
+    "recurrent" (GRU) the gate is also set by the previous state: a second dotted line
     leaves that cell at 45 degrees and comes down onto the dot from above, with HOOK_BEND as
-    its bend. A selective SSM's gate (mode true) reads the input alone."""
+    its bend. A selective SSM's gate (mode true) reads the input alone. With `also` (a row
+    above, `gate_also`), a dotted line leaves that row's previous cell at 45 degrees and comes
+    straight down onto the dot: LSTM's gates read the previous hidden state, a row of its own."""
     ordered = sorted(dst, key=lambda k: d.cells[k].x)
     srcs = sorted(src, key=lambda k: d.cells[k].x)
     for idx in range(1, len(ordered)):
@@ -1040,6 +1061,27 @@ def gates(d: Diagram, src: list, dst: list, mode=True):
                     ends=(A.key,),
                     opacity=A.opacity,
                     src=(A.key,),
+                    dst=B.key,
+                    t0=0.0,
+                    t1=0.5,
+                )
+            )
+        if also:  # leaves the cell at 45 degrees, then comes straight down onto the dot
+            Hc = d.cells[sorted(also, key=lambda k: d.cells[k].x)[idx - 1]]
+            sx = 1 if B.x > A.x else -1
+            s = extent(Hc, sx * DIAG, DIAG) + GAP
+            q0 = (Hc.x + sx * DIAG * s, Hc.y + DIAG * s)
+            q2 = (mx, my - DOT - GAP)
+            q1 = (mx, q0[1] + abs(mx - q0[0]))
+            path, samples = rounded_path([q0, q1, q2], HOOK_BEND)
+            d.segs.append(
+                Seg(
+                    "gate",
+                    samples,
+                    d=path,
+                    ends=(Hc.key,),
+                    opacity=Hc.opacity,
+                    src=(Hc.key,),
                     dst=B.key,
                     t0=0.0,
                     t1=0.5,
@@ -1118,9 +1160,9 @@ def elbow(d: Diagram, spec: dict, style: str, arrow: bool, default_side: str):
             break
         reach -= 0.5
     path, samples = rounded_path([p0, c1, c2, p3], BEND)
-    d.segs.append(
-        Seg(style, samples, d=path, ends=(ka, kb), opacity=min(A.opacity, B.opacity), arrow=arrow)
-    )
+    # `solid`: drawn at full strength even into a faded cell (GPT's next input, not yet run)
+    op = 1.0 if spec.get("solid") else min(A.opacity, B.opacity)
+    d.segs.append(Seg(style, samples, d=path, ends=(ka, kb), opacity=op, arrow=arrow))
 
 
 def arc(d: Diagram, a: dict):
@@ -1583,13 +1625,21 @@ def live_weights(d: Diagram, seed: int) -> dict:
 
 def primer_live(d: Diagram) -> str:
     """The controls under the primer's live network: a slider per input, the outputs' values,
-    and a button for new weights."""
+    and a button for new weights; then a target per output, the loss, and a button that trains
+    one step toward the targets."""
     ins = sorted((c for c in d.cells.values() if c.kind == "input"), key=lambda c: c.x)
     sliders = "".join(
         # named without its shown value, which the slider itself reports (so it isn't read twice)
         f'<label><span>Input {i + 1}</span><input type="range" min="0" max="1" step="0.01" '
         f'value="0.5" data-c="{c.key}" aria-label="Input {i + 1}"><output aria-hidden="true">0.50</output></label>'
         for i, c in enumerate(ins)
+    )
+    outs = sorted((c for c in d.cells.values() if c.kind == "output"), key=lambda c: c.x)
+    targets = "".join(  # a target per output, for training; spread apart so there is work to do
+        f'<label><span>Target {i + 1}</span><input type="range" min="0" max="1" step="0.01" '
+        f'value="{0.9 if i % 2 == 0 else 0.1}" data-t="{c.key}" aria-label="Target {i + 1}">'
+        f'<output aria-hidden="true">{0.9 if i % 2 == 0 else 0.1:.2f}</output></label>'
+        for i, c in enumerate(outs)
     )
     # the readout first, right under the drawing it explains, so a tap on a phone shows its
     # numbers in view rather than below the sliders
@@ -1598,7 +1648,12 @@ def primer_live(d: Diagram) -> str:
         '<p class="p-read" aria-live="polite">Point at a unit or a line to see its numbers.</p>'
         f'{sliders}<p class="p-outs"><span>Outputs</span> '
         '<output class="p-out"></output>'
-        '<button type="button" class="p-new">Randomize weights</button></p></div>'
+        '<button type="button" class="p-new">Randomize weights</button></p>'
+        f"{targets}"
+        '<p class="p-loss"><span>Loss</span> <output class="p-loss-v"></output>'
+        '<span class="p-loss-bar" aria-hidden="true"><span></span></span>'
+        '<button type="button" class="p-train">Train one step</button></p>'
+        '<p class="p-trained" aria-live="polite"></p></div>'
     )
 
 
@@ -2976,6 +3031,13 @@ def primer_html(doc: dict, diagrams: dict) -> str:
         + primer_key(sec.get("key", []), sec.get("groups"))
         for sec, ps in zip(doc.get("primer", []), linked)
     )
+    if doc.get("path"):  # the way out of the primer, onto the reading path (#start)
+        sections += (
+            '<h3>Where to start</h3><p><a class="p-start" href="#start">Start here</a>: '
+            f'{len(doc["path"])} steps in order, from the perceptron on, each with a line on what it '
+            "adds to the ones before, and after each step its side trips, which take in the rest. "
+            "The page's order menu keeps it as Reading path.</p>"
+        )
     return (
         '<dialog id="primer" aria-labelledby="p-title"><div class="p-wrap">'
         '<h2 id="p-title" tabindex="-1">What is a neural network?</h2>'
@@ -3318,6 +3380,40 @@ def lint_doc(doc: dict, diagrams: dict) -> list:
                 file=sys.stderr,
             )
         warns = [w for w in warns if "too wide" not in w]
+    # a signature must pick something out, and the reading path must name panels, once each
+    for aid, a in arch.items():
+        if not a.get("signature"):  # the page's Highlight toggle shows one on every panel
+            warns.append(f"{aid}: give it a `signature`, its defining part")
+        if a.get("signature"):
+            try:
+                segs, rings = signature_parts(diagrams[aid], a["signature"])
+            except ValueError as e:
+                warns.append(f"{aid}: signature: {e}")
+                continue
+            if not segs and not rings:
+                warns.append(f"{aid}: its signature picks out nothing")
+            if not a.get("circle"):
+                warns.append(f"{aid}: give it a `circle`, what a circle stands for in its drawing")
+            if not a["signature"].get("note"):
+                warns.append(f"{aid}: give its signature a `note`, what the highlight shows")
+    seen = set()
+    for p in [q for m in doc.get("path", []) for q in [m] + list(m.get("branches", []))]:
+        if p.get("id") not in arch:
+            warns.append(f"path: unknown panel '{p.get('id')}'")
+        elif p["id"] in seen:
+            warns.append(f"path: '{p['id']}' is on it twice")
+        if not p.get("text"):
+            warns.append(f"path: '{p.get('id')}' needs a line of text")
+        seen.add(p.get("id"))
+    if doc.get("path"):
+        for aid in arch:
+            if aid not in seen:
+                warns.append(f"path: '{aid}' is on neither the path nor a branch")
+    for st in doc.get("path", []):
+        if not st.get("title"):
+            warns.append(
+                f"path: step '{st.get('id')}' needs a title, what it and its side trips share"
+            )
     return warns
 
 
@@ -3512,6 +3608,73 @@ def unfocused(d: Diagram, s: "Seg | None" = None, cell: str = "") -> bool:
     return True
 
 
+SIG_LINE = 1.9  # a signature's lines: heavier than LINE
+SIG_HALO = 5.2  # and the soft band of ink under them
+SIG_HALO_OPACITY = 0.16
+
+
+def signature_parts(d: Diagram, sig: dict) -> tuple:
+    """A panel's signature (`signature`): its defining part, the lines and cells that make it what it is. `styles` picks
+    lines by style, narrowed to those touching `cells` when both are given; `cells` alone picks
+    the lines joining two of those cells (not a stem, which touches one); `ring` sets a soft disc behind cells (BERT's masked token).
+    """
+
+    def keys_of(refs):
+        out = set()
+        for r in refs:
+            k = ref(d, r)
+            out |= set(d.groups[k]) if k in d.groups else {k}
+        return out
+
+    styles, keys = set(sig.get("styles", [])), keys_of(sig.get("cells", []))
+    segs = []
+    for s in d.segs:
+        ends = set(s.ends) | ({s.dst} if s.dst else set()) | set(s.src)
+        if styles and s.style in styles and (not keys or ends & keys):
+            segs.append(s)
+        elif not styles and keys and len(ends) > 1 and ends <= keys:  # joins two picked cells
+            segs.append(s)
+    return segs, [d.cells[k] for k in sorted(keys_of(sig.get("ring", [])))]
+
+
+def signature_svg(d: Diagram, sig: dict, marker_id: str, ink: str = "currentColor") -> tuple:
+    """A signature drawn as two layers, under and over the drawing: a soft band of ink under its
+    lines and behind its ringed cells, and its lines again at SIG_LINE. In ink, not a new hue, so
+    it holds in grayscale; the page shows it only while its Highlight toggle is on."""
+    segs, rings = signature_parts(d, sig)
+
+    def shape(s, extra):
+        if s.style == "func":
+            return f'<path d="{squiggle(s.pts[0], s.pts[-1])}"{extra}/>'
+        if s.d:
+            return f'<path d="{s.d}"{extra}/>'
+        (x0, y0), (x1, y1) = s.pts[0], s.pts[-1]
+        return f'<line x1="{fmt(x0)}" y1="{fmt(y0)}" x2="{fmt(x1)}" y2="{fmt(y1)}"{extra}/>'
+
+    def dash(s):  # the style's dash, opened up for the heavier line
+        st = LINKS[s.style]
+        if "dash" not in st:
+            return ""
+        return (
+            ' stroke-dasharray="' + " ".join(fmt(float(v) * 1.6) for v in st["dash"].split()) + '"'
+        )
+
+    discs = "".join(
+        f'<circle cx="{fmt(c.x)}" cy="{fmt(c.y)}" r="{fmt(R + 5.5)}" fill="{ink}" fill-opacity="{SIG_HALO_OPACITY}"/>'
+        for c in rings
+    )
+    halos = "".join(shape(s, "") for s in segs)
+    over = "".join(
+        shape(s, dash(s) + (f' marker-end="url(#{marker_id})"' if s.arrow else "")) for s in segs
+    )
+    g = f'fill="none" stroke="{ink}" stroke-linecap="round" stroke-linejoin="round"'
+    return (
+        f'<g class="sig" aria-hidden="true">{discs}<g {g} stroke-width="{SIG_HALO}" '
+        f'stroke-opacity="{SIG_HALO_OPACITY}">{halos}</g></g>',
+        f'<g class="sig" aria-hidden="true"><g {g} stroke-width="{SIG_LINE}">{over}</g></g>',
+    )
+
+
 def render_diagram(
     d: Diagram,
     marker_id: str,
@@ -3519,13 +3682,15 @@ def render_diagram(
     tags: bool = False,
     weights: dict | None = None,
     named: bool = False,
+    sig: dict | None = None,
 ) -> str:
     """A diagram's lines, dots and cells. With `tags`, each part names its key entry
     (data-k="cell:hidden", "link:state"), so the page can light up the parts a key entry
     stands for, and its step in the data flow (data-s, see flow_steps), so the page can
     step through a pass. With `weights` ({(from, to): w}), each cell names itself (data-c) and
     each line its ends and weight (data-e, data-w), for the primer's live network; `named`
-    names the cells and lines' ends the same way, without weights (a primer figure's tips)."""
+    names the cells and lines' ends the same way, without weights (a primer figure's tips).
+    With `sig` (a panel's `signature`), its two layers go under and over the rest."""
 
     def tag(k):
         return f' data-k="{k}"' if tags else ""
@@ -3654,6 +3819,9 @@ def render_diagram(
         # lit and faded with its cells: in a step-through, and when their key entry is picked
         step = at(d.steps.get(keys[0], 0), tuple(keys))
         out.append(f'<g{tag("cell:" + cs[0].kind)}{step}>{label}</g>' if tags else label)
+    if sig:
+        under, over = signature_svg(d, sig, marker_id, ink)
+        out = [under] + out + [over]
     return "".join(out)
 
 
@@ -4159,6 +4327,7 @@ ORDER_OPTIONS = "".join(
     f'<option value="{v}">{t}</option>'
     for v, t in (
         ("family", "By family"),
+        ("path", "Reading path, start here"),
         ("year", "By year, oldest first"),
         ("year-desc", "By year, newest first"),
         ("name", "By name, A to Z"),
@@ -4537,12 +4706,56 @@ def write_preview(out: str, doc: dict, diagrams: dict):
     cairosvg.svg2png(bytestring=svg.encode(), write_to=os.path.join(out, "preview.png"))
 
 
+# What a circle stands for, by kind (an architecture's `circle`); each completes "In this
+# diagram, ...". A panel may give a phrase of its own instead.
+CIRCLES = {
+    "unit": "each circle is one unit, a single number",
+    "seq": "each circle is one position's vector at one layer: a token, or a time step",
+    "grid": (
+        "each circle is one position's features at one layer, all its channels together: a pixel, or an audio sample"
+    ),
+    "sample": (
+        "each circle in the middle column is a whole sample, such as an image, at one step of generation"
+    ),
+    "node": "each circle is one node of a graph, its vector at one step",
+}
+
+
+def circle_text(a: dict) -> str:
+    c = a.get("circle", "")
+    return f"In this diagram, {CIRCLES.get(c, c)}." if c else ""
+
+
+def sig_note_html(a: dict) -> str:
+    """The highlight's note under a card's caption, shown only while the Highlight toggle is on
+    (by the page's style, so a screen reader hears it only then too)."""
+    note = (a.get("signature") or {}).get("note", "")
+    return f'<span class="snote">Highlighted: {prose_html(note)}</span>' if note else ""
+
+
+def path_places(doc: dict) -> dict:
+    """Each panel's place on the reading path: its main step's number, its label (4, or 4a for
+    a side trip), its line, and a rank that sorts main steps and their branches in order."""
+    out = {}
+    for i, p in enumerate(doc.get("path", []), 1):
+        out[p["id"]] = dict(
+            step=i, label=str(i), text=p["text"], title=p.get("title", ""), main=True, rank=i * 100
+        )
+        for j, b in enumerate(p.get("branches", []), 1):
+            out[b["id"]] = dict(
+                step=i, label=f"{i}{chr(96 + j)}", text=b["text"], main=False, rank=i * 100 + j
+            )
+    return out
+
+
 def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
     """mode='artifact': a fragment for publishing; mode='standalone': a complete HTML file."""
     arch = doc["architectures"]
     fam_of = {p: s for s in doc["sections"] for p in s["panels"]}
     titles = {s["id"]: s["title"] for s in doc["sections"]}
     notes = footnotes(doc)
+    # the reading path (`path`): each panel's place on it and the line on what it adds
+    path_at = path_places(doc)
     data = OrderedDict()
     sections_html = []
     for s in doc["sections"]:
@@ -4554,7 +4767,14 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
             svg = (
                 f'<svg viewBox="0 0 {fmt(W)} {fmt(H)}" aria-hidden="true" focusable="false" '
                 f'data-steps="{flow_count(d)}"{SEQ_ATTR if d.seq else ""}><defs>{marker_def(mid, "currentColor")}</defs>'
-                f"{render_diagram(d, mid, tags=True)}</svg>"
+                f"{render_diagram(d, mid, tags=True, sig=a.get('signature'))}</svg>"
+            )
+            step = path_at.get(pid)
+            pnote = (
+                f'<span class="pnote{"" if step["main"] else " side"}" hidden>'
+                f'<span class="pnum">{step["label"]}</span> {prose_html(step["text"])}</span>'
+                if step
+                else ""
             )
             cards.append(
                 f'<button class="card" type="button" data-id="{pid}"{has_attr(a)}>{svg}'
@@ -4562,8 +4782,9 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 f'<span class="row"><span class="name">{html.escape(a["name"])}</span>'
                 f'<span class="year"><span class="sr-only">, landmark paper </span>{a["year"]}<span class="sr-only">. </span></span></span>'
                 f'<span class="cap">{prose_html(caption)}</span>'
+                f"{sig_note_html(a)}"
                 f'<span class="tag"><span class="sr-only">. {"Objective" if a.get("scheme") else "Typical objective"}: </span>'
-                f'{html.escape(a["objective"])}</span></button>'
+                f'{html.escape(a["objective"])}</span>{pnote}</button>'
             )
             papers = [dict(paper_ref(p), title=p["title"], url=p["url"]) for p in a["papers"]]
             text = " ".join(
@@ -4607,6 +4828,13 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
                 # other names, variants, and related methods, each under its own label
                 names=[[label, a[f]] for f, label in NAME_LISTS.items() if a.get(f)],
                 related=related_of(doc, pid),
+                # its place on the reading path (0 if off it), and the main step it hangs off
+                path=path_at[pid]["rank"] if pid in path_at else 0,
+                pathStep=path_at[pid]["step"] if pid in path_at else 0,
+                sigNote=prose_html((a.get("signature") or {}).get("note", "")),  # escaped here
+                circle=prose_html(circle_text(a)),  # what a circle stands for, atop the key
+                pathTitle=path_at[pid].get("title", "") if pid in path_at else "",
+                pathMain=bool(path_at.get(pid, {}).get("main")),
                 note=" ".join(notes[pid]) if pid in notes else "",
                 summary=plain(a["summary"].strip()),
                 read=plain(a.get("read", "").strip()),
@@ -4674,6 +4902,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <select id="f-family" aria-label="Family">{families}</select>
 <select id="f-order" aria-label="Order">{ORDER_OPTIONS}</select>
 <select id="f-objective" aria-label="Training objective">{options}</select>
+<button class="icon-btn pack" type="button" id="f-sig" aria-pressed="false" aria-label="Highlight each diagram's defining part" title="Highlight each diagram's defining part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21h8"/><path d="M15 4l5 5-8.5 8.5H7v-4.5z"/><path d="M13 6l5 5"/></svg></button>
 <button class="icon-btn pack" type="button" id="f-pack" aria-pressed="false" aria-label="One section per row" title="One section per row"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3.5" width="18" height="4.5" rx="1.2"/><rect x="3" y="9.75" width="18" height="4.5" rx="1.2"/><rect x="3" y="16" width="18" height="4.5" rx="1.2"/></svg></button>
 <input id="f-search" type="search" placeholder="Search, e.g. memory" aria-label="Search diagrams and the glossary">
 <span class="count" id="f-count" aria-live="polite"></span>
@@ -4696,6 +4925,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <h2 id="d-name" tabindex="-1"></h2>
 <p class="d-full" id="d-full"></p>
 <p class="d-cap" id="d-cap"></p>
+<p class="d-snote" id="d-snote"></p>
 <p class="d-note" id="d-note" hidden></p>
 </div>
 <div class="d-side">
@@ -4709,7 +4939,7 @@ def web_page(doc: dict, diagrams: dict, mode: str = "artifact") -> str:
 <div class="d-fig" id="d-fig"></div>
 <div class="p-fig-ctl d-fig-ctl"><div class="d-flowctl" id="d-flowctl" data-state="idle" hidden><button class="d-stop" type="button" id="d-stop" aria-label="Stop" title="Stop"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button><button class="d-back" type="button" aria-label="Previous step" title="Previous step"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="2.5" height="12" rx="1"/><path d="M18 6v12l-8.5-6z"/></svg></button><button class="d-play" type="button" id="d-play"><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6" width="4" height="12" rx="1"/><rect x="13.5" y="6" width="4" height="12" rx="1"/></svg><span>Step through</span></button><button class="d-fwd" type="button" aria-label="Next step" title="Next step"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="15.5" y="6" width="2.5" height="12" rx="1"/><path d="M6 6v12l8.5-6z"/></svg></button><button class="d-rate" type="button" aria-label="Step-through speed: 1×" title="Step-through speed">1×</button></div>
 <p class="p-say d-say" id="d-say" aria-live="polite" hidden></p></div>
-<div class="d-keybox"><h3 class="d-label">Key</h3><div class="d-key" id="d-key"></div><p class="d-has" id="d-has" hidden></p></div>
+<div class="d-keybox"><h3 class="d-label">Key</h3><p class="d-circle" id="d-circle"></p><div class="d-key" id="d-key"></div><p class="d-has" id="d-has" hidden></p></div>
 <div class="d-read" id="d-read-wrap"><h3 class="d-label">Reading the diagram</h3><p id="d-read"></p></div>
 </div>
 <div class="d-text d-body">

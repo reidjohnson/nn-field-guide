@@ -258,7 +258,7 @@ def test_page_reads_in_order_with_keyboard_and_screen_reader(page):
         document.querySelectorAll('.legend ul:not([aria-labelledby])').forEach(() => out.push('unnamed legend list'));
         document.querySelectorAll('#primer figure svg[role=img]:not([aria-label])').forEach(() => out.push('unnamed primer figure'));
         document.querySelectorAll('#primer input[type=range]').forEach(i => {
-            if (!/^Input \\d$/.test(i.getAttribute('aria-label') || '')) out.push('slider named by its value');
+            if (!/^(Input|Target) \\d$/.test(i.getAttribute('aria-label') || '')) out.push('slider named by its value');
         });
         return out;
     }""")
@@ -495,3 +495,100 @@ def test_primer_units_read_out_by_keyboard(page):
     page.keyboard.press("End")
     assert said().startswith("Output 2")
     assert view(page)["primer"]  # the arrow keys stayed in the drawing
+
+
+# --------------------------------------------------------------------------- highlight and the reading path
+
+
+def sig_shown(pg):
+    """Whether the cards' signature layers are drawn (the Highlight toggle is on)."""
+    return pg.evaluate(
+        "() => getComputedStyle(document.querySelector('.card svg .sig')).display !== 'none'"
+    )
+
+
+def test_highlight_is_on_every_panel_and_remembered(page):
+    go(page)
+    cards = page.locator(".card").count()
+    assert page.locator(".card svg .sig").count() == 2 * cards  # under and over, on every panel
+    btn = page.locator("#f-sig")
+    assert btn.get_attribute("aria-pressed") == "false" and not sig_shown(page)
+    assert page.locator(".card .snote").count() == cards  # a note for every highlight
+    assert not page.locator(".card .snote").first.is_visible()
+    btn.click()
+    assert btn.get_attribute("aria-pressed") == "true" and sig_shown(page)
+    assert page.locator(".card .snote").first.is_visible()  # the note says what it shows
+    go(page, "#resnet")  # the panel's text says it too
+    assert page.locator("#d-snote").is_visible()
+    assert page.locator("#d-snote").text_content().startswith("Highlighted: ")
+    go(page)  # remembered for this reader
+    assert page.locator("#f-sig").get_attribute("aria-pressed") == "true" and sig_shown(page)
+    page.locator("#f-sig").click()
+    go(page)
+    assert not sig_shown(page)
+
+
+def test_reading_path_order_and_notes(page):
+    go(page)
+    path = page.evaluate(
+        """() => { const D = JSON.parse(document.getElementById('guide-data').textContent);
+        return Object.keys(D).filter(k => D[k].path).sort((a, b) => D[a].path - D[b].path); }"""
+    )
+    cards = page.locator(".card").count()
+    assert len(path) == cards  # every panel is on it, as a main step or a side trip
+    assert page.locator(".card .pnote:not([hidden])").count() == 0  # notes only on the path
+    page.select_option("#f-order", "path")
+    settle(page, 200)
+    shown = page.eval_on_selector_all(
+        "#groups section.family .card", "cs => cs.map(c => c.dataset.id)"
+    )
+    assert shown == path
+    assert page.locator(".card .pnote:not([hidden])").count() == cards
+    # a section per main step, each opening with its step, then its side trips (4a, 4b, ...)
+    firsts = page.eval_on_selector_all(
+        "#groups section.family", "ss => ss.map(s => s.querySelector('.pnum').textContent)"
+    )
+    assert firsts == [str(i) for i in range(1, len(firsts) + 1)]
+    assert page.locator("#groups .pnote.side").count() == cards - len(firsts)
+    page.select_option("#f-order", "family")
+    settle(page, 200)
+    assert page.locator(".card .pnote:not([hidden])").count() == 0
+
+
+def test_every_panel_says_what_a_circle_is(page):
+    for pid in ("mlp", "gpt", "cnn", "diffusion", "gnn"):
+        go(page, "#" + pid)
+        assert page.locator("#d-circle").text_content().startswith("In this diagram, ")
+
+
+def test_primer_start_here_opens_the_reading_path(page):
+    go(page, "#primer")
+    assert view(page)["primer"]
+    link = page.locator("#primer a.p-start")
+    link.scroll_into_view_if_needed()
+    link.click()
+    settle(page)
+    assert not view(page)["primer"]
+    assert page.locator("#f-order").input_value() == "path"
+    assert page.locator("#g-p1").count() == 1
+    go(page, "#start")  # and the link on its own
+    assert page.locator("#f-order").input_value() == "path"
+
+
+def test_primer_mlp_trains_toward_its_targets(page):
+    go(page, "#primer")
+    fig = page.locator("#primer .p-live")
+    fig.scroll_into_view_if_needed()
+    loss = lambda: float(fig.locator(".p-loss-v").text_content())
+    start = loss()
+    assert start > 0
+    for _ in range(5):  # each step lowers the loss on this example
+        before = loss()
+        fig.locator(".p-train").click()
+        assert loss() < before
+    assert fig.locator(".p-trained").text_content().startswith("Step 5:")
+    for _ in range(60):  # and enough of them bring the outputs near their targets
+        fig.locator(".p-train").click()
+    assert loss() < start / 4
+    fig.locator(".p-new").click()  # new random weights start over
+    assert fig.locator(".p-trained").text_content() == ""

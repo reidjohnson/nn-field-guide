@@ -8,7 +8,7 @@ A reference chart of neural network architectures and training schemes, from the
 
 ## How to read it
 
-Each panel runs from input at the bottom to output at the top; a network that settles as a whole (Hopfield, Boltzmann) is drawn as a ring, and a graph network as its graph. A circle is one unit (in sequence models, one token's vector); a square is something bigger, such as an image patch or a whole network (a gray box). Faded cells and links take little or no part in the step shown. The poster's legend and the page explain every mark, and the page's glossary explains the terms (attention, convolution, gates, and more), several with a diagram that steps through how they work. In short, each cell's color and mark give its job:
+Each panel runs from input at the bottom to output at the top; a network that settles as a whole (Hopfield, Boltzmann) is drawn as a ring, and a graph network as its graph. A circle is one unit (in sequence models, one token's vector); a square is something bigger, such as an image patch or a whole network (a gray box). Faded cells and links take little or no part in the step shown. The poster's legend and the page explain every mark, and the page's glossary explains the terms (attention, convolution, gates, and more), several with a diagram that steps through how they work. On the page, the highlighter beside the menus marks each diagram's defining part, and the order menu's *Reading path, start here* (or a link to `#start`) lays the diagrams out as a path: a main line of steps, each with a line on what it adds, and after each step its side trips, which take in the rest. In short, each cell's color and mark give its job:
 
 | Job | Color | Mark |
 |---|---|---|
@@ -25,7 +25,7 @@ And each line's style gives what it carries:
 |---|---|---|
 | Connection | thin solid line | a learned weight from one cell to another |
 | Skip connection | solid elbow beside the layers | data carried around one or more layers, then added or joined back |
-| Data passed on or fed back | arrow | state passed to the next step (straight), or an output fed back to run the network again (elbow) |
+| Data passed on or fed back | arrow | state passed to the next step (straight), or an output fed back to run the network again (elbow, or an arrowhead on an input's stem) |
 | Gate | dotted line ending at a dot | a value from 0 to 1 that scales the arrow it meets at the dot |
 | Similarity score | dashed line | a weight set by how well two things match, not learned: attention's reads, and comparisons such as CLIP's |
 | Learnable function | wavy line | a whole learned function on the connection, not a single weight (KAN) |
@@ -70,6 +70,7 @@ Add an entry under `architectures:` and list its id in a section. Rows run from 
     year: 2018
     caption: Every token sees every token     # one line, checked for width
     objective: masked token                   # one of OBJECTIVES in guide.py
+    signature: {styles: [cross], cells: [[r0, 2]], ring: [[r0, 2]]}   # what the page's highlighter marks
     summary: A Transformer encoder on its own...
     papers:
       - {cite: Devlin et al. 2018, title: "BERT: ...", url: "https://arxiv.org/abs/1810.04805"}
@@ -80,6 +81,10 @@ Add an entry under `architectures:` and list its id in a section. Rows run from 
         - {cell: attention, n: 4, connect: full, style: cross}
         - {cell: output, n: 4, connect: one, dim: [0, 1, 3]}
 ```
+
+Every panel needs a `signature`, its defining part: lines by `styles` (narrowed to those touching `cells` when both are given), the lines joining `cells` alone, and soft discs behind `ring` cells, with a `note` the page shows under the caption while the highlighter is on ("Highlighted: …"). Lint checks each picks something out and has its note. A few row options came with it: `fed` draws an input's stem as an arrow, for an input that was an earlier output (GPT, WaveNet, a decoder); `gate_also` adds a gate from a row above (LSTM's hidden state); and a loop with `solid: true` stays full strength into a faded cell (GPT's next position).
+
+Every panel goes on the reading path, under `path:`: as a main step, with a `title` naming what it and its side trips share and one line on what it adds, or under a step's `branches:` as a side trip, with one line on what it changes. Lint checks each is a panel, listed once, and that none is left off.
 
 ## Adding a glossary entry
 

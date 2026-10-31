@@ -252,7 +252,8 @@
     const cells = {};
     fig.querySelectorAll('[data-c]').forEach(e => { if (e.tagName !== 'INPUT') cells[e.dataset.c] = e; });
     const lines = Array.from(fig.querySelectorAll('[data-e]'));
-    const sliders = Array.from(fig.querySelectorAll('input[type="range"]'));
+    const sliders = Array.from(fig.querySelectorAll('input[type="range"][data-c]'));
+    const targets = Array.from(fig.querySelectorAll('input[type="range"][data-t]'));
     const rowOf = k => +k.split('.')[0].replace(/\D/g, '');
     const order = Object.keys(cells).sort((a, b) => rowOf(a) - rowOf(b));
     const last = Math.max(...order.map(rowOf));
@@ -325,12 +326,52 @@
       });
       order.forEach(k => { cells[k].style.opacity = (0.2 + 0.8 * act[k]).toFixed(2); });
       outEl.value = order.filter(k => rowOf(k) === last).map(k => act[k].toFixed(2)).join(' · ');
+      showLoss();
       explain();
     }
+    // Training, on this one example: the loss is the squared gap between each output and its
+    // target, and Train one step moves every weight against its gradient, worked out by
+    // backpropagation through the sigmoids, so the outputs creep toward the targets.
+    const lossEl = fig.querySelector('.p-loss-v'), barEl = fig.querySelector('.p-loss-bar > span');
+    const trainedEl = fig.querySelector('.p-trained');
+    const RATE = 2.0;  // big enough that one step shows; small enough not to overshoot
+    const loss = () => targets.reduce((s, t) => s + (act[t.dataset.t] - +t.value) ** 2, 0);
+    function showLoss() {
+      targets.forEach(t => { t.nextElementSibling.value = (+t.value).toFixed(2); });
+      const L = loss();
+      lossEl.value = L.toFixed(3);
+      barEl.style.width = Math.min(100, 100 * L / targets.length).toFixed(1) + '%';  // at most 1 per output
+    }
+    let steps = 0;
+    function trainStep() {
+      const before = loss();
+      const delta = {};  // ∂loss/∂(a unit's sum), from the outputs down
+      for (const k of order.slice().reverse()) {
+        if (sliders.some(s => s.dataset.c === k)) continue;  // inputs have no weights into them
+        const t = targets.find(t => t.dataset.t === k);
+        const back = t ? 2 * (act[k] - +t.value)
+          : lines.filter(l => l.dataset.e.split(' ')[0] === k)
+            .reduce((s, l) => s + +l.dataset.w * delta[l.dataset.e.split(' ')[1]], 0);
+        delta[k] = back * act[k] * (1 - act[k]);  // the sigmoid's slope
+      }
+      lines.forEach(l => {
+        const [a, b] = l.dataset.e.split(' ');
+        l.dataset.w = (+l.dataset.w - RATE * delta[b] * act[a]).toFixed(3);
+      });
+      run();
+      steps++;
+      const after = loss();
+      trainedEl.textContent = `Step ${steps}: each weight moved a little in the direction that lowers the loss, ` +
+        `${before.toFixed(3)} → ${after.toFixed(3)}.`;
+    }
+    fig.querySelector('.p-train').addEventListener('click', trainStep);
+    targets.forEach(t => t.addEventListener('input', () => { showLoss(); }));
     sliders.forEach(s => s.addEventListener('input', run));
     fig.querySelector('.p-new').addEventListener('click', () => {
       const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
       lines.forEach(l => { l.dataset.w = (Math.round(gauss() * 22) / 10).toFixed(1); });
+      steps = 0;
+      trainedEl.textContent = '';
       run();
     });
     run();
@@ -674,6 +715,22 @@
   const byYear = sign => (a, b) => sign * (DATA[a].year - DATA[b].year) || rank(a) - rank(b);
 
   function groupsFor(order) {
+    if (order === 'path') {  // a section per main step: the step, then its side trips
+      const on = ORDER.filter(id => DATA[id].path).sort((a, b) => DATA[a].path - DATA[b].path);
+      const out = [];
+      for (const id of on) {
+        const s = DATA[id].pathStep;
+        let g = out[out.length - 1];
+        if (!g || g.step !== s) {
+          g = { id: 'p' + s, step: s, title: s + ' · ' + (DATA[id].pathTitle || DATA[id].name), ids: [], plain: true };
+          out.push(g);
+        }
+        g.ids.push(id);
+      }
+      const rest = ORDER.filter(id => !DATA[id].path);  // none, while lint keeps every panel on it
+      if (rest.length) out.push({ id: 'rest', title: 'The rest', ids: rest });
+      return out;
+    }
     if (order === 'name') {
       return [{ id: 'az', title: 'A to Z', ids: ORDER.slice().sort((a, b) =>
         DATA[a].name.localeCompare(DATA[b].name, 'en', { sensitivity: 'base' })) }];
@@ -700,6 +757,8 @@
 
   function arrange(order) {
     groupsEl.textContent = '';
+    // on the reading path, each card on it says what it adds
+    cards.forEach(c => { const n = c.querySelector('.pnote'); if (n) n.hidden = order !== 'path'; });
     for (const g of groupsFor(order)) {
       const sec = document.createElement('section');
       sec.className = 'family';
@@ -729,6 +788,22 @@
     orderSel.value = savedOrder;
     arrange(savedOrder);
   }
+
+  // Highlight: each drawing's signature, its defining part, drawn heavier with a soft
+  // band of ink under it (the .sig layers guide.py draws); off by default, remembered
+  const sigBtn = document.getElementById('f-sig');
+  const setSig = on => {
+    document.documentElement.classList.toggle('sig-on', on);
+    sigBtn.setAttribute('aria-pressed', String(on));
+  };
+  let sigOn = false;
+  try { sigOn = localStorage.getItem('field-guide-sig') === 'on'; } catch (e) {}
+  setSig(sigOn);
+  sigBtn.addEventListener('click', () => {
+    sigOn = !sigOn;
+    setSig(sigOn);
+    try { localStorage.setItem('field-guide-sig', sigOn ? 'on' : 'off'); } catch (e) {}
+  });
 
   // Keys drive drawings, as a Vega-Lite legend does: a click on an entry (or Enter or Space)
   // selects it, lighting up that entry and every part it stands for while the rest fades; a
@@ -1181,6 +1256,8 @@
     setText('d-full', d.full);
     document.getElementById('d-full').hidden = !d.full;
     document.getElementById('d-cap').innerHTML = d.captionHtml;  // escaped by guide.py
+    document.getElementById('d-circle').innerHTML = d.circle;  // escaped by guide.py
+    document.getElementById('d-snote').innerHTML = d.sigNote ? 'Highlighted: ' + d.sigNote : '';  // escaped by guide.py
     setText('d-note', d.note);
     document.getElementById('d-note').hidden = !d.note;
     document.getElementById('d-uses-text').innerHTML = d.usedForHtml;  // escaped by guide.py
@@ -1390,6 +1467,14 @@
     if (h === 'primer' || h.startsWith('primer-')) return 'primer';
     return null;
   }
+  // The reading path, from the primer's last link or a shared #start link; for this
+  // visit only, not remembered as the reader's order
+  function startPath() {
+    if (!orderSel.querySelector('option[value="path"]')) return;
+    if (orderSel.value !== 'path') { orderSel.value = 'path'; arrange('path'); }
+    const first = document.getElementById('g-p1');
+    if (first) first.scrollIntoView({ block: 'start' });
+  }
   function route() {
     routing = true;
     try {
@@ -1409,6 +1494,8 @@
       if (want.primer && moveTo(primer, want.primer)) openPrimer(want.primer.slice(7));
       if (want.glossary && moveTo(glossary, want.glossary)) openGlossary(want.glossary.slice(9));
       if (want.panel && st.fromGloss && viewOf(h) === 'panel') showBack(st.fromGloss, st.fromTerm || '');
+      // #start: the reading path, from the primer's last link or a shared link; not remembered
+      if (h === 'start') startPath();
     } finally {
       routing = false;
     }

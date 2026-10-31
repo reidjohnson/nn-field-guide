@@ -697,13 +697,15 @@ def sharing_all_section(doc: dict, sa: dict) -> tuple:
 _guide_gates = guide.gates
 
 
-def gates_variant(d, src, dst, mode=True):
+def gates_variant(d, src, dst, mode=True, also=None):
     """guide.gates, plus the ways a gate that also reads the previous state could be drawn:
     "hook" (now), "output" (a straight line from the previous step's output, h at t-1),
     "chevron" (up from the previous state at 45 degrees and down onto the dot at 45) and
-    "single" (the input's line alone, the reading note saying the rest)."""
+    "single" (the input's line alone, the reading note saying the rest). `also` (a row's
+    `gate_also`, LSTM's hidden state) passes through to guide.gates."""
     if mode in (True, "recurrent", "hook", "single"):
-        return _guide_gates(d, src, dst, "recurrent" if mode in ("recurrent", "hook") else True)
+        m = "recurrent" if mode in ("recurrent", "hook") else True
+        return _guide_gates(d, src, dst, m, also)
     _guide_gates(d, src, dst, True)
     ordered = sorted(dst, key=lambda k: d.cells[k].x)
     for idx in range(1, len(ordered)):

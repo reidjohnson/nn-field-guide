@@ -12,8 +12,12 @@
 #   chain    right | left | double: state arrows between neighbours in the row
 #   gate     true: dotted gate from the row below to a dot on each state arrow;
 #            recurrent: also from the previous state cell, hooked onto the dot from above
+#   gate_also  a row id: also a dotted gate from that row's previous cell down onto each dot
+#            (LSTM: the hidden state, drawn as a row of its own above the cell state)
 #   dim      indices drawn faded (inactive or low weight); edges touching them fade too
 #   level / y / xs / ys / pitch / ring: placement overrides (normally automatic)
+#   fed      indices of inputs that were earlier outputs, fed back in: each stem drawn as an
+#            arrow into its cell (GPT's earlier tokens)
 #   marks    false: leave this row's cells without their group mark (e.g. a picture's patches);
 #            a list gives it cell by cell
 #   name     a letter set in italic at the left of the row's first cell, as in the objective;
@@ -24,7 +28,8 @@
 # Panel-level extras: links (extra rules between any rows), arcs (skip connections) and
 # loops (return arrows, style `loop`), both elbows beside the layers with `side` and optional
 # `reach` (an arc between two whole rows of the same size is drawn once per column; a loop
-# with `whole: true` feeds the whole `from` row back to the whole `to` row instead: a line
+# with `solid: true` is drawn at full strength into a faded cell, as GPT's into its next input;
+# a loop with `whole: true` feeds the whole `from` row back to the whole `to` row instead: a line
 # above the outputs, down the side, and beneath the inputs, with an arrow into each, the
 # outputs keeping their stems past it), arrows (straight, in the state arrow's style unless
 # given: from a cell [group, i]
@@ -64,6 +69,15 @@
 # built_with (the networks it is usually built from). Each is written once, on the more specific
 # panel; the page shows it from both ends (Kind of / Kinds, Builds on / Led to,
 # Often built with / Often used in).
+# `signature` names a drawing's defining part: `styles` (lines of those styles,
+# narrowed to those touching `cells` when both are given), `cells` alone (the lines among them),
+# and `ring` (a soft disc behind cells). The page draws it heavier, with a soft band of ink under
+# it, while its Highlight toggle is on, with its `note` ("Highlighted: ...", a short phrase)
+# under the caption; the poster never does. Every panel has one; lint checks it picks something
+# and has a note. `cells` alone picks lines joining two of them, never a stem.
+# `circle` says what a circle stands for in this drawing, shown at the top of the panel's key: one
+# of unit, seq, grid, sample, node (CIRCLES in guide.py), or a phrase of its own, completing "In this
+# diagram, ...". Every panel has one.
 # `aka` lists other names for the same thing (SOM); `variants` versions of the design drawn
 # (Mamba-2, RWKV under linear attention); `related_methods` distinct methods that only resemble
 # it and share neither its drawing nor its objective (LVQ beside the Kohonen map, GRPO beside
@@ -112,6 +126,12 @@ primer:
       draws a fresh random set, like a network before training. Real networks also learn a bias,
       a number added to each unit's sum; the drawings and this demo leave it out.
 
+      To see training, set a target for each output and press Train one step. The loss is the
+      squared gap between the outputs and their targets; each step moves every weight a little
+      in the direction that lowers it, so the outputs creep toward the targets. That is training
+      on one example; a real network does it over many, so it learns the task rather than one
+      answer.
+
       The MLP uses only four of the symbols below, each first in its list: the input unit,
       hidden unit, output unit and connection. The rest appear in other panels, for memory,
       attention, gates and more; each panel's key lists the ones it uses.
@@ -151,7 +171,7 @@ primer:
       - {cell: environment, text: "The world an agent acts in, outside the network: it takes an action and returns the next state and a reward."}
       - {link: link, text: "One weight between single units: the value below is scaled by it on the way up. Between whole vectors it is a matrix of weights."}
       - {link: skip, text: "Carries a layer's input around it, to be added to its output or joined to a later layer."}
-      - {link: state, text: "Data carried one way: a state to the next step, a message to a neighbor, or, bent around the side, an output fed back in to run the network again."}
+      - {link: state, text: "Data carried one way: a state to the next step, a message to a neighbor, or, bent around the side or as the arrowhead on an input's stem, an output fed back in to run the network again."}
       - {link: gate, text: "A learned signal that sets how much passes along the arrow it meets, at the dot."}
       - {link: cross, text: "A weight computed from the input by how well two things match, as in every attention read (what passes still goes through learned weights shared by every line), or the match score itself, as in a similarity."}
       - {link: func, text: "A small learned function in place of a single weight."}
@@ -225,10 +245,13 @@ primer:
       matrix-valued state, a whole network, or an environment. Each line is a connection (one
       weight in the MLP), and a cell's color and mark show its role, as the key explains. The
       diagrams show how parts connect, not complete implementations: normalization, most residual
-      paths and positional information are left out. Select any diagram for its explanation, how it
+      paths and positional information are left out. They are also small: two or three layers
+      stand for the dozens a real network stacks, and four positions for a sequence of any
+      length. Select any diagram for its explanation, how it
       is trained, and where it came from. In most diagrams, Step through lights each unit once
       everything it reads has lit, so stacked layers move along a sequence as a diagonal wave;
-      networks that settle, sample or loop follow steps of their own.
+      networks that settle, sample or loop follow steps of their own. The highlighter beside the
+      menus marks each diagram's defining part.
 # Drawings shown only in the primer and the glossary. Most are networks, specified like a
 # panel's diagram, with a hand-written `flow` whose steps each give a `say` line (the caption
 # while stepping) and may `hold` cells lit without their lines (a clamped unit). Further keys:
@@ -343,6 +366,40 @@ figures:
       - {to: [[x, 1], [h, 1], [y, 1]], within: true, from: [h, 0], say: "The state is passed on (the arrow). The second input updates it, with the same weights as the first."}
       - {to: [[x, 2], [h, 2], [y, 2]], within: true, from: [h, 1], say: "And again: one step per input, the state carrying a summary of everything so far."}
       - {to: [[x, 3], [h, 3], [y, 3]], within: true, from: [h, 2], say: "Earlier inputs reach this output only through the state, which is why long memories are hard; LSTMs and GRUs add gates to help."}
+
+  seq2seq_bottleneck:   # the first seq2seq: the encoder's last state is all the decoder gets
+    alt: "An encoder reading three words, its last state passed by one arrow to a decoder that writes two words, the arrow standing out"
+    rows:
+      - {id: ex, cell: input, n: 3, xs: [20, 60, 100], y: 130}
+      - {id: er, cell: recurrent, n: 3, xs: [20, 60, 100], y: 72, connect: one, from: ex, chain: right}
+      - {id: dx, cell: input, n: 2, xs: [148, 188], y: 130}
+      - {id: dr, cell: recurrent, n: 2, xs: [148, 188], y: 72, connect: one, from: dx, chain: right}
+      - {id: dy, cell: output, n: 2, xs: [148, 188], y: 14, connect: one, from: dr}
+    links:   # the one state handed across
+      - {from: er, to: dr, rule: pairs, pairs: [[2, 0]], style: state}
+    focus: {cells: [[er, 2], [dr, 0]]}   # at rest, the state handed across stands out
+    flow:
+      - {to: [[ex, 0], [er, 0]], within: true, say: "The encoder reads the source sentence, one word at a time."}
+      - {to: [[ex, 1], [er, 1]], within: true, from: [er, 0], say: "Its state is passed along and updated with each word."}
+      - {to: [[ex, 2], [er, 2]], within: true, from: [er, 1], say: "Its last state must now hold the whole sentence."}
+      - {to: [[dx, 0], [dr, 0], [dy, 0]], within: true, from: [er, 2], say: "The decoder starts from that one state (the arrow across) and writes the first word."}
+      - {to: [[dx, 1], [dr, 1], [dy, 1]], within: true, from: [[dr, 0], [dy, 0]], say: "Each later word reads only the decoder's own state, never the source again. A long sentence loses detail in the squeeze: the bottleneck attention removed."}
+
+  autoregressive_loop:   # GPT's panel, about the loop: each output fed back as the next input
+    alt: "A prompt token and two earlier outputs feeding a causal Transformer; each output goes back in as the next input, the newest by an arrow around the side into the next, not yet run, position"
+    rows:
+      - {id: x, cell: input, n: 4, xs: [32, 80, 128, 176], dim: [3], fed: [1, 2]}
+      - {id: a1, cell: attention, n: 3, xs: [32, 80, 128], connect: causal, style: cross}
+      - {id: a2, cell: attention, n: 3, xs: [32, 80, 128], connect: causal, style: cross}
+      - {id: y, cell: output, n: 3, xs: [32, 80, 128], connect: one}
+    loops:
+      - {from: [y, 2], to: [x, 3], side: right, solid: true}
+    focus: {cells: [x, y], styles: [loop]}   # at rest, the tokens going in and out stand out
+    flow:
+      - {to: [[x, 0], [a1, 0], [a2, 0], [y, 0]], within: true, say: "The prompt goes in, and the model predicts the next token."}
+      - {to: [[x, 1], [a1, 1], [a2, 1], [y, 1]], within: true, from: [[y, 0], [x, 0], [a1, 0]], say: "That prediction is fed back in as the next input (the arrowhead), and the model predicts again, reading everything so far."}
+      - {to: [[x, 2], [a1, 2], [a2, 2], [y, 2]], within: true, from: [[y, 1], [x, 0], [x, 1], [a1, 0], [a1, 1]], say: "And again: each output becomes the next input, one token at a time."}
+      - {to: [x, 3], from: [y, 2], say: "The newest goes in next (the arrow around the side). Generation stops at an end token or a length limit."}
 
   residual_add:   # a skip path around a layer
     alt: "An input going through a layer and, by a skip path around it, straight to the output, where the two are added"
@@ -1327,8 +1384,9 @@ glossary:
       - {cite: "Yu & Koltun 2015", title: "Multi-scale context aggregation by dilated convolutions", url: "https://arxiv.org/abs/1511.07122"}
     text: >-
       Spacing out the inputs a convolution reads, skipping some between each. Doubling the spacing
-      at each layer lets the reach grow exponentially with depth, so ten layers reach 1,024 steps
-      back, and a few stacks of them thousands.
+      at each layer lets the reach grow exponentially with depth: with filters two wide, as in
+      WaveNet, and spacings 1, 2, 4, … 512, ten layers reach 1,024 steps back, and a few stacks of
+      them thousands. Wider filters or other spacings reach further or less far.
   - term: Edge
     group: operations
     figure: graph_edges
@@ -2099,13 +2157,16 @@ glossary:
   # ---- model families
   - term: Autoregressive model
     group: models
+    figure: autoregressive_loop
+    labels: [Tokens in, Attention, Attention, Next token]
     match: [autoregressive models, autoregressive model, autoregressive, autoregressively]
     used_in: [gpt, transformer, rnn_attention, wavenet, linear_attention, mamba_hybrid]
     used_as: examples
     sources: [van den Oord et al. 2016, Radford et al. 2018]
     text: >-
       A model that generates one piece at a time, each predicted from everything before it,
-      feeding each output back in as the next input. Most language models work this way; diffusion
+      feeding each output back in as the next input: in the guide, an arrowhead on an input's stem,
+      or an arrow around the side for the newest. Most language models work this way; diffusion
       language models fill in many tokens at once instead.
   - term: Diffusion
     group: models
@@ -2159,9 +2220,10 @@ glossary:
     sources: ["Dinh, Krueger & Bengio 2014", Chen et al. 2018]
     text: >-
       A generative model built from invertible steps that turn simple noise into data and back, so
-      it can compute its likelihood of any data exactly (a probability density). Flow matching
-      trains a continuous one, whose steps are tiny moves along a learned velocity; its likelihood
-      takes an ODE solve to compute.
+      it has an exact formula for its likelihood of any data (a probability density), which a flow
+      of discrete steps computes directly. Flow matching trains a continuous one, whose steps are
+      tiny moves along a learned velocity; its likelihood is computed numerically, by solving an
+      ODE, often with a random estimate of one term along the way.
   - term: Word2vec
     group: models
     figure: skipgram_fan
@@ -2223,7 +2285,9 @@ glossary:
       most later versions.
   - term: Sequence to sequence
     group: tasks
-    match: [sequence-to-sequence, sequence to sequence, translation, translates, translate]
+    figure: seq2seq_bottleneck
+    labels: [Words in, States, Words out]
+    match: [sequence-to-sequence, sequence to sequence, seq2seq, translation, translates, translate]
     used_in: [rnn_attention, transformer]
     used_as: examples
     sources:
@@ -2233,8 +2297,10 @@ glossary:
     text: >-
       Mapping one sequence to another of possibly different length, such as a sentence to its
       translation: an encoder reads the whole input, and a decoder writes the output, usually one
-      token at a time. Translation drove the move from recurrent encoder–decoders to attention, and
-      then to the Transformer.
+      token at a time. In the first neural versions (seq2seq, 2014) the decoder got only the
+      encoder's last state, so a whole sentence had to fit in one vector, and long ones lost
+      detail; attention let the decoder read every encoder state instead. Translation drove the
+      move from recurrent encoder–decoders to attention, and then to the Transformer.
   - term: Zero-shot
     group: tasks
     match: [zero-shot classification, zero-shot]
@@ -2332,6 +2398,95 @@ sections:
   - {id: generative, title: Generative frameworks, panels: [vae, gan, normalizing_flow, diffusion, flow_matching]}
   - {id: reinforcement, title: Reinforcement, panels: [policy_gradient]}
 
+# The reading path: the page's "Reading path, start here" order. A main path for a new reader,
+# each step with a `title` naming what it and its side trips share (its section's heading), one
+# line on what it adds to the ones before, and after a step its `branches`:
+# side trips that build on it, each with a line on what it changes. Numbered 1, 2, ... and 1a,
+# 1b, ...; together they take in every panel. Lint checks each id is a panel, listed once, with
+# its line, and that no panel is left off.
+path:
+  - id: perceptron
+    title: "Units that sum, settle, or compete"
+    text: "Start here: one unit, a weighted sum and a threshold."
+    branches:
+      - {id: hopfield, text: "Wire the units to each other, both ways: the network settles into a stored memory."}
+      - {id: boltzmann, text: "Make those units random, so it samples patterns instead of settling on one."}
+      - {id: rbm, text: "Split them into two layers with no links within either, so it trains far faster."}
+      - {id: dbn, text: "Stack RBMs, trained one at a time: an early way to train deep networks."}
+      - {id: som, text: "Let units compete for each input: the winner and its neighbors move toward it."}
+  - id: mlp
+    title: "Layers, and what they learn"
+    text: "Stack units in layers, trained by backpropagation."
+    branches:
+      - {id: kan, text: "Put a learned curve on each connection instead of a single weight."}
+      - {id: rbf, text: "Hidden units measure distance to a stored point instead of taking a weighted sum."}
+      - {id: autoencoder, text: "Train it to rebuild its own input through a narrow code."}
+      - {id: sparse_ae, text: "A wide code instead, with only a few units allowed to be active."}
+      - {id: denoising_ae, text: "Rebuild the clean input from a corrupted copy."}
+      - {id: siamese, text: "Run two inputs through the same network and compare what comes out."}
+  - id: cnn
+    title: "Convolution: one filter, reused"
+    text: "Slide one small filter across an image: local features, far fewer weights."
+    branches:
+      - {id: unet, text: "Shrink, then grow back, copying detail across: a label for every pixel."}
+      - {id: wavenet, text: "Convolve along time, reaching twice as far back at each layer."}
+      - {id: capsnet, text: "Units output vectors, routed to the layer above by agreement."}
+  - id: resnet
+    title: "Skip paths, for depth"
+    text: "Add a skip path around each block, and networks can go much deeper."
+  - id: rnn
+    title: "Recurrence: a state passed on"
+    text: "Pass a state from step to step, to read a sequence."
+    branches:
+      - {id: birnn, text: "Read the sequence both ways, so each position sees what comes after it."}
+  - id: lstm
+    title: "Gates and memory"
+    text: "Gate the state, so it can hold information over many steps."
+    branches:
+      - {id: gru, text: "One state and two gates: a simpler LSTM."}
+      - {id: ntm, text: "Give the network a memory of its own, read and written by attention."}
+  - id: rnn_attention
+    title: "Attention, on top of recurrence"
+    text: "One state can't hold a whole sentence; attention lets the decoder read every encoder state."
+  - id: transformer
+    title: "Attention and its relatives"
+    text: "Attention replaces the recurrence, so every position is processed at once."
+    branches:
+      - {id: modern_hopfield, text: "Hopfield's memory again, read by attention."}
+      - {id: gnn, text: "Pass messages along a graph's edges instead of between every pair."}
+  - id: bert
+    title: "Encoders: fill in the blank"
+    text: "The encoder alone, trained to fill in hidden words."
+  - id: gpt
+    title: "Decoders: the next token"
+    text: "The decoder alone, trained to predict the next token: today's LLMs."
+  - id: vit
+    title: "Images as tokens"
+    text: "The same Transformer, reading an image as patches."
+    branches:
+      - {id: clip, text: "Train an image encoder and a text encoder to agree on matching pairs."}
+  - id: moe
+    title: "Routing to experts"
+    text: "Send each token to a few experts, so a model grows without running all of it."
+  - id: mamba
+    title: "Recurrence again, in linear time"
+    text: "A selective state again, in time that grows only linearly with length."
+    branches:
+      - {id: linear_attention, text: "Attention rewritten as a recurrence with a matrix state: Mamba's forerunner."}
+      - {id: mamba_hybrid, text: "Mostly recurrent layers, with a little attention mixed in."}
+  - id: diffusion
+    title: "Generating new data"
+    text: "Generate by learning to undo noise, step by step."
+    branches:
+      - {id: vae, text: "Generate in one step instead, by decoding a sampled code."}
+      - {id: gan, text: "Train a generator against a judge that tells real from fake."}
+      - {id: normalizing_flow, text: "Turn noise into data by an invertible map, so likelihoods are exact."}
+      - {id: flow_matching, text: "Learn a velocity that carries noise to data."}
+      - {id: diffusion_llm, text: "Diffusion for text: unmask tokens in parallel, step by step."}
+  - id: policy_gradient
+    title: "Learning from reward"
+    text: "Learn from reward instead of right answers."
+
 architectures:
 
   # ---------------------------------------------------------------- feed-forward
@@ -2365,6 +2520,8 @@ architectures:
       arriving and the output unit summing them.
     papers:
       - {cite: Rosenblatt 1958, title: "The perceptron: a probabilistic model for information storage and organization in the brain", url: "https://doi.org/10.1037/h0042519"}
+    circle: unit
+    signature: {cells: [r0, r1], ring: [r1], note: "the weighted sum, and the unit that thresholds it"}
     diagram:
       say:   # a caption for each step of the step-through
         - "Three inputs come in, each a number."
@@ -2400,6 +2557,8 @@ architectures:
       passing up one layer at a time.
     papers:
       - {cite: "Rumelhart, Hinton & Williams 1986", title: "Learning representations by back-propagating errors", url: "https://doi.org/10.1038/323533a0"}
+    circle: unit
+    signature: {ring: [r1, r2], note: "the hidden layers"}
     diagram:
       say:   # a caption for each step of the step-through
         - "Three numbers come in, one per input unit."
@@ -2441,6 +2600,8 @@ architectures:
     papers:
       - {cite: LeCun et al. 1989, title: "Backpropagation applied to handwritten zip code recognition", url: "https://doi.org/10.1162/neco.1989.1.4.541"}
       - {cite: Fukushima 1980, title: "Neocognitron: A self-organizing neural network model for a mechanism of pattern recognition unaffected by shift in position", url: "https://doi.org/10.1007/BF00344251"}
+    circle: grid
+    signature: {cells: [r0, r1], note: "one filter, read at every window"}
     diagram:
       say:   # a caption for each step of the step-through
         - "An input, such as a row of pixels (an image has two dimensions; one is drawn)."
@@ -2479,6 +2640,8 @@ architectures:
       Step through shows an input passing through two blocks, each adding its input back in.
     papers:
       - {cite: He et al. 2015, title: "Deep residual learning for image recognition", url: "https://arxiv.org/abs/1512.03385"}
+    circle: grid
+    signature: {styles: [skip], note: "the skip paths around each block"}
     diagram:
       say:   # a caption for each step of the step-through
         - "An input."
@@ -2513,36 +2676,40 @@ architectures:
       standard denoiser inside image diffusion models.
     read: >-
       Drawn upright, so the U becomes an hourglass, narrowing through two scales to the
-      bottleneck and widening back out; the paper has four. Each pair of curved lines copies a
-      whole encoder layer across to the decoder layer of the same size, where it is joined to
-      what comes up from below: the outer pair at the larger scale, the inner pair at the
-      smaller, nested like the arms of the U. It is fully convolutional, with no dense layer:
-      each output reads only the units below it, giving a label for every pixel. Step through
-      shows an image going down to the bottleneck and back up, picking up detail at each scale.
+      bottleneck and widening back out; the paper has four. Each curved line copies one position
+      of an encoder layer across to the same position in the decoder layer of the same size,
+      where it is joined to what comes up from below: three at the larger scale, two at the
+      smaller, each beside the edge it is nearer, so the two arms of the U stay mirrored. It is
+      fully convolutional, with no dense layer: each output reads only the units below it,
+      giving a label for every pixel. Step through shows an image going down to the bottleneck
+      and back up, picking up detail at each scale.
     papers:
       - {cite: "Ronneberger, Fischer & Brox 2015", title: "U-Net: Convolutional networks for biomedical image segmentation", url: "https://arxiv.org/abs/1505.04597"}
+    circle: grid
+    signature: {styles: [skip], note: "every position copied across the U"}
     diagram:
       say:   # a caption for each step of the step-through
-        - "An image, drawn as a row of six pixels."
+        - "An image, drawn as a row of four pixels."
         - "The encoder's first layer reads windows of the image..."
         - "...and the next shrinks it further, to coarser features."
-        - "The bottleneck: the smallest scale, where each unit sees the most of the image."
-        - "The decoder grows it back, joining in the encoder layer of the same size (the inner curved lines) for the detail lost on the way down."
-        - "Again at the larger scale, with the outer pair."
+        - "The bottleneck: the smallest scale, where one unit sees the whole image."
+        - "The decoder grows it back, joining in each position of the encoder layer of the same size (the inner curved lines) for the detail lost on the way down."
+        - "Again at the larger scale, every position copied across by the outer lines."
         - "One output per pixel: a label, or in a diffusion model, the predicted noise."
-      rows:
-        - {id: x, cell: input, n: 6, pitch: 35.2}
-        - {id: e1, cell: conv, n: 4, pitch: 35.2, connect: "window:3"}   # the larger scale
-        - {id: e2, cell: conv, n: 3, pitch: 35.2, connect: "window:2"}   # the smaller
-        - {id: b, cell: conv, n: 2, pitch: 35.2, connect: "window:2"}   # the bottleneck
-        - {id: d2, cell: conv, n: 3, pitch: 35.2, connect: "spread:2"}
-        - {id: d1, cell: conv, n: 4, pitch: 35.2, connect: "spread:2"}
-        - {id: y, cell: output, n: 6, pitch: 35.2, connect: "spread:3"}
-      arcs:   # each scale's copy across, drawn once on each side: nested, like the U's arms
+      rows:   # few units, sixty apart, so every position's skip fits beside its column
+        - {id: x, cell: input, n: 4, pitch: 48}   # the image and labels nearer, tapering into the skips
+        - {id: e1, cell: conv, n: 3, pitch: 60, connect: "window:2"}   # the larger scale
+        - {id: e2, cell: conv, n: 2, pitch: 60, connect: "window:2"}   # the smaller
+        - {id: b, cell: conv, n: 1, pitch: 60, connect: "window:2"}   # the bottleneck
+        - {id: d2, cell: conv, n: 2, pitch: 60, connect: "spread:2"}
+        - {id: d1, cell: conv, n: 3, pitch: 60, connect: "spread:2"}
+        - {id: y, cell: output, n: 4, pitch: 48, connect: "spread:2"}
+      arcs:   # every position of each scale copied across, each on the side nearer its edge (the middle one left)
         - {from: [e1, 0], to: [d1, 0], side: left}
-        - {from: [e1, 3], to: [d1, 3], side: right}
+        - {from: [e1, 1], to: [d1, 1], side: left}
+        - {from: [e1, 2], to: [d1, 2], side: right}
         - {from: [e2, 0], to: [d2, 0], side: left}
-        - {from: [e2, 2], to: [d2, 2], side: right}
+        - {from: [e2, 1], to: [d2, 1], side: right}
 
   kan:
     name: KAN
@@ -2567,6 +2734,8 @@ architectures:
     papers:
       - {cite: Liu et al. 2024, title: "KAN: Kolmogorov–Arnold networks", url: "https://arxiv.org/abs/2404.19756"}
       - {cite: Yang & Wang 2024, title: "Kolmogorov–Arnold Transformer", url: "https://arxiv.org/abs/2409.10594"}
+    circle: unit
+    signature: {styles: [func], note: "the learned function on every connection"}
     diagram:
       say:   # a caption for each step of the step-through
         - "Two inputs."
@@ -2603,6 +2772,8 @@ architectures:
     papers:
       - {cite: Elman 1990, title: "Finding structure in time", url: "https://doi.org/10.1207/s15516709cog1402_1"}
       - {cite: Jordan 1986, title: "Serial order: A parallel distributed processing approach", url: "https://apps.dtic.mil/sti/html/tr/ADA173989/index.html"}
+    circle: seq
+    signature: {styles: [state], note: "the state passed from step to step"}
     diagram:
       say:   # a caption for each step of the step-through
         - "The first input arrives."
@@ -2635,26 +2806,35 @@ architectures:
       steps while the forget gate stays near 1. xLSTM (2024) revived it with exponential gates and,
       in its mLSTM variant, a matrix memory that trains in parallel.
     read: >-
-      The double arrow is the pair of states (cell and hidden), each handed to the same cell at
-      the next step. The dot stands for the three gates, which act there and are set by both the
-      input below (the straight dotted line) and the previous step's state (the hooked one).
-      Step through shows a sequence read one step at a time, both states carried along.
+      Two rows of state. Below, the cell state (ringed), carried from step to step along the
+      arrows; above it, the hidden state, passed up from the cell (the arrow up, with no weight
+      of its own) and on to the output. The dot on each arrow along stands for the three gates,
+      which act there and are set by the input below and by the previous step's hidden state
+      above (the two dotted lines). Step through shows a sequence read one step at a time, the
+      cell state carried along.
     papers:
       - {cite: Hochreiter & Schmidhuber 1997, title: "Long short-term memory", url: "https://doi.org/10.1162/neco.1997.9.8.1735"}
       - {cite: "Gers, Schmidhuber & Cummins 2000", title: "Learning to forget: Continual prediction with LSTM", url: "https://doi.org/10.1162/089976600300015015"}
       - {cite: Beck et al. 2024, title: "xLSTM: Extended long short-term memory", url: "https://arxiv.org/abs/2405.04517"}
+    circle: seq
+    signature: {cells: [c], note: "the cell state, carried along"}
     diagram:
       say:   # a caption for each step of the step-through
         - "The first input arrives."
-        - "The gates (the dot), set by the input and the previous state, decide what to forget, what to write into the cell, and what to show."
-        - "The first output is read from the hidden state; both states pass along the double arrow to the next step."
-        - "Each step repeats it. While the forget gate stays near 1, the cell state carries information across many steps almost untouched."
-        - "The last cell has seen every input."
+        - "It is written into the cell state (ringed): the network's long-term memory."
+        - "The hidden state reads the cell; the second input arrives."
+        - "The gates (the dot), set by the new input and the previous hidden state (the two dotted lines), decide what to forget, what to write, and what to show. The cell state moves on along the arrow; the first output is read from the hidden state."
+        - "Each step repeats it."
+        - "While the forget gate stays near 1, the cell state carries information across many steps almost untouched."
+        - "The hidden state is the short-term view: what the cell shows at this step, and what the next step's gates read."
+        - "The last cell state has seen every input."
+        - "The last hidden state reads it."
         - "The last output."
-      rows:
-        - {cell: input, n: 4}
-        - {cell: memory, n: 4, connect: one, chain: double, gate: recurrent}
-        - {cell: output, n: 4, connect: one}
+      rows:   # the cell state below, the hidden state above: LSTM's two states
+        - {id: x, cell: input, n: 4}
+        - {id: c, cell: memory, n: 4, connect: one, chain: right, gate: true, gate_also: h}
+        - {id: h, cell: recurrent, n: 4, connect: one, style: state}   # an arrow: no learned weight, h = o ⊙ tanh(c)
+        - {id: y, cell: output, n: 4, connect: one}
 
   birnn:
     name: Bidirectional RNN
@@ -2677,6 +2857,8 @@ architectures:
       both, come first.
     papers:
       - {cite: Schuster & Paliwal 1997, title: "Bidirectional recurrent neural networks", url: "https://doi.org/10.1109/78.650093"}
+    circle: seq
+    signature: {cells: [b], note: "the backward pass"}
     diagram:
       say:   # a caption for each step of the step-through
         - "Four inputs. The forward row starts at the left end, the backward row at the right."
@@ -2715,6 +2897,8 @@ architectures:
       one state carried along.
     papers:
       - {cite: Cho et al. 2014, title: "Learning phrase representations using RNN encoder–decoder for statistical machine translation", url: "https://arxiv.org/abs/1406.1078"}
+    circle: seq
+    signature: {styles: [gate], note: "the gates, set by the input and the state"}
     diagram:
       say:   # a caption for each step of the step-through
         - "The first input arrives."
@@ -2747,7 +2931,8 @@ architectures:
     summary: >-
       A recurrent encoder reads the source and a recurrent decoder writes the target; before
       each step the decoder compares its previous state with every encoder state and feeds the
-      weighted mix into its next state. It made attention, a learned soft weighting by content
+      weighted mix into its next state. Before it, the decoder got only the encoder's last state,
+      a whole sentence squeezed into one vector. It made attention, a learned soft weighting by content
       over the encoder's states, central to neural machine translation. (Earlier models had
       learned where to look in images, and Graves's 2013 handwriting model a soft window over
       its text.) Three years later the Transformer kept the attention and dropped the
@@ -2759,19 +2944,22 @@ architectures:
       encoder's states (dashed), weighted by how well each matches, and feeds the next decoder
       state. Here the pink node is attention alone, with no feed-forward layer. Bahdanau et al.
       also ran the encoder in both directions; Luong et al. (2015) later simplified the wiring,
-      attending from the current state. Step through shows translation: the encoder reads the
-      source, then the decoder writes one word at a time.
+      attending from the current state. The arrowhead under the decoder's second input marks a
+      word it wrote, fed back in. Step through shows translation: the encoder reads the source,
+      then the decoder writes one word at a time.
     papers:
       - {cite: "Bahdanau, Cho & Bengio 2014", title: "Neural machine translation by jointly learning to align and translate", url: "https://arxiv.org/abs/1409.0473"}
       - {cite: "Sutskever, Vinyals & Le 2014", title: "Sequence to sequence learning with neural networks", url: "https://arxiv.org/abs/1409.3215"}
       - {cite: "Luong, Pham & Manning 2015", title: "Effective approaches to attention-based neural machine translation", url: "https://arxiv.org/abs/1508.04025"}
       - {cite: Graves 2013, title: "Generating sequences with recurrent neural networks", url: "https://arxiv.org/abs/1308.0850"}
+    circle: seq
+    signature: {styles: [cross], note: "attention's reads of every encoder state"}
     diagram:
       levels: 4
       rows:
         - {id: ex, cell: input, n: 2, xs: [26, 70], level: 0}   # 44 apart within each side, 72 between them, as in the Transformer
         - {id: er, cell: recurrent, n: 2, xs: [26, 70], level: 2, connect: one, from: ex, chain: right}
-        - {id: dx, cell: input, n: 2, xs: [142, 186], level: 0}
+        - {id: dx, cell: input, n: 2, xs: [142, 186], level: 0, fed: [1]}   # the second, the word it wrote
         - {id: da, cell: attention, n: 2, xs: [106, 164], level: 1}   # midway between steps
         - {id: dr, cell: recurrent, n: 2, xs: [142, 186], level: 2, connect: one, from: dx, chain: right}
         - {id: dy, cell: output, n: 2, xs: [142, 186], level: 3, connect: one, from: dr}
@@ -2814,6 +3002,8 @@ architectures:
     papers:
       - {cite: "Graves, Wayne & Danihelka 2014", title: "Neural Turing machines", url: "https://arxiv.org/abs/1410.5401"}
       - {cite: Graves et al. 2016, title: "Hybrid computing using a neural network with dynamic external memory", url: "https://doi.org/10.1038/nature20101"}
+    circle: "each circle is one unit of the controller, and each ringed circle at the right one row of memory, a whole vector"
+    signature: {styles: [cross], note: "the reads and writes to memory"}
     diagram:
       say:   # a caption for each step of the step-through
         - "Three inputs arrive."
@@ -2853,6 +3043,8 @@ architectures:
     papers:
       - {cite: Hopfield 1982, title: "Neural networks and physical systems with emergent collective computational abilities", url: "https://doi.org/10.1073/pnas.79.8.2554"}
       - {cite: "Amit, Gutfreund & Sompolinsky 1985", title: "Storing infinite numbers of patterns in a spin-glass model of neural networks", url: "https://doi.org/10.1103/PhysRevLett.55.1530"}
+    circle: unit
+    signature: {styles: [link], note: "every unit tied to every other, both ways"}
     diagram:
       rows:
         - {id: u, cell: backfed, n: 6, ring: {r: 58}}   # top and bottom units on the rows other panels use
@@ -2891,6 +3083,8 @@ architectures:
       input, its winner, and the winner's neighborhood moving.
     papers:
       - {cite: Kohonen 1982, title: "Self-organized formation of topologically correct feature maps", url: "https://doi.org/10.1007/BF00337288"}
+    circle: unit
+    signature: {cells: [m], ring: [[m, 2]], note: "the winner and its neighbors"}
     diagram:
       span: [130, 34]
       rows:
@@ -2926,6 +3120,8 @@ architectures:
       Step through shows the clamped phase, sampling each hidden unit in turn.
     papers:
       - {cite: "Ackley, Hinton & Sejnowski 1985", title: "A learning algorithm for Boltzmann machines", url: "https://doi.org/10.1207/s15516709cog0901_7"}
+    circle: unit
+    signature: {ring: [u], note: "the stochastic units"}
     diagram:
       rows:
         - {id: u, cell: [prob, prob, backfed, backfed, backfed, prob], ring: {r: 58}}
@@ -2962,6 +3158,8 @@ architectures:
     papers:
       - {cite: Smolensky 1986, title: "Information processing in dynamical systems: Foundations of harmony theory", url: "https://stanford.edu/~jlmcc/papers/PDP/Volume%201/Chap6_PDP86.pdf", source: "Parallel Distributed Processing, vol. 1"}
       - {cite: Hinton 2002, title: "Training products of experts by minimizing contrastive divergence", url: "https://doi.org/10.1162/089976602760128018"}
+    circle: unit
+    signature: {cells: [v, h], note: "links only between the two layers"}
     diagram:
       span: [130, 46]
       rows:
@@ -2995,6 +3193,8 @@ architectures:
       Step through shows generation, from the top RBM down to the visible units.
     papers:
       - {cite: "Hinton, Osindero & Teh 2006", title: "A fast learning algorithm for deep belief nets", url: "https://doi.org/10.1162/neco.2006.18.7.1527"}
+    circle: unit
+    signature: {cells: [h2, h3], note: "the top RBM, its links undirected"}
     diagram:
       rows:
         - {id: v, cell: backfed, n: 4}
@@ -3039,6 +3239,8 @@ architectures:
     papers:
       - {cite: Ramsauer et al. 2020, title: "Hopfield networks is all you need", url: "https://arxiv.org/abs/2008.02217"}
       - {cite: Krotov & Hopfield 2016, title: "Dense associative memory for pattern recognition", url: "https://arxiv.org/abs/1606.01164"}
+    circle: "the circle below is the query, each ringed circle a stored pattern, and the circle above the result: each one a whole vector"
+    signature: {styles: [cross], ring: [p], note: "the stored patterns, read by similarity"}
     diagram:
       say:   # a caption for each step of the step-through
         - "A query: a pattern, perhaps partial or noisy, to look up."
@@ -3075,6 +3277,8 @@ architectures:
     papers:
       - {cite: Broomhead & Lowe 1988, title: "Multivariable functional interpolation and adaptive networks", url: "https://www.complex-systems.com/abstracts/v02_i03_a05/"}
       - {cite: Moody & Darken 1989, title: "Fast learning in networks of locally-tuned processing units", url: "https://doi.org/10.1162/neco.1989.1.2.281"}
+    circle: unit
+    signature: {styles: [cross], note: "each hidden unit's distance to its center"}
     diagram:
       say:   # a caption for each step of the step-through
         - "An input: three numbers."
@@ -3113,6 +3317,8 @@ architectures:
       - {cite: "Hadsell, Chopra & LeCun 2006", title: "Dimensionality reduction by learning an invariant mapping", url: "https://doi.org/10.1109/CVPR.2006.100"}
       - {cite: "Chopra, Hadsell & LeCun 2005", title: "Learning a similarity metric discriminatively, with application to face verification", url: "https://doi.org/10.1109/CVPR.2005.202"}
       - {cite: Reimers & Gurevych 2019, title: "Sentence-BERT: Sentence embeddings using Siamese BERT-networks", url: "https://arxiv.org/abs/1908.10084"}
+    circle: unit
+    signature: {styles: [cross], ring: [ae, be], note: "the two embeddings, compared"}
     diagram:
       say:   # a caption for each step of the step-through
         - "Two inputs, one into each tower."
@@ -3158,6 +3364,8 @@ architectures:
     papers:
       - {cite: "Rumelhart, Hinton & Williams 1986", title: "Learning internal representations by error propagation", url: "https://apps.dtic.mil/sti/pdfs/ADA164453.pdf", source: "Parallel Distributed Processing, vol. 1"}
       - {cite: Bourlard & Kamp 1988, title: "Auto-association by multilayer perceptrons and singular value decomposition", url: "https://doi.org/10.1007/BF00332918"}
+    circle: unit
+    signature: {ring: [r1], note: "the narrow code"}
     diagram:
       say:   # a caption for each step of the step-through
         - "An input: four numbers."
@@ -3193,6 +3401,8 @@ architectures:
     papers:
       - {cite: Ranzato et al. 2006, title: "Efficient learning of sparse representations with an energy-based model", url: "https://papers.nips.cc/paper_files/paper/2006/hash/87f4d79e36d68c3031ccf6c55e9bbd39-Abstract.html"}
       - {cite: Bricken et al. 2023, title: "Towards monosemanticity: Decomposing language models with dictionary learning", url: "https://transformer-circuits.pub/2023/monosemantic-features"}
+    circle: unit
+    signature: {ring: [[r1, 1], [r1, 4]], note: "the few active units"}
     diagram:
       say:   # a caption for each step of the step-through
         - "An input: three numbers."
@@ -3227,6 +3437,8 @@ architectures:
       clean.
     papers:
       - {cite: Vincent et al. 2008, title: "Extracting and composing robust features with denoising autoencoders", url: "https://doi.org/10.1145/1390156.1390294"}
+    circle: unit
+    signature: {ring: [r0], note: "the corrupted input"}
     diagram:
       say:   # a caption for each step of the step-through
         - "A corrupted input: the data with noise added."
@@ -3262,6 +3474,8 @@ architectures:
       an input encoded, a code sampled, and the input rebuilt.
     papers:
       - {cite: Kingma & Welling 2013, title: "Auto-encoding variational Bayes", url: "https://arxiv.org/abs/1312.6114"}
+    circle: unit
+    signature: {cells: [eps, z], ring: [z], note: "the sampled code"}
     diagram:
       say:   # a caption for each step of the step-through
         - "An input."
@@ -3307,6 +3521,8 @@ architectures:
       - {cite: Goodfellow et al. 2014, title: "Generative adversarial nets", url: "https://arxiv.org/abs/1406.2661"}
       - {cite: "Radford, Metz & Chintala 2015", title: "Unsupervised representation learning with deep convolutional generative adversarial networks", url: "https://arxiv.org/abs/1511.06434"}
       - {cite: Isola et al. 2016, title: "Image-to-image translation with conditional adversarial networks", url: "https://arxiv.org/abs/1611.07004"}
+    circle: unit
+    signature: {cells: [f, r, d1, d2], note: "the same D judging fake and real"}
     diagram:
       rows:
         - {id: z, cell: noise, n: 2, xs: [20, 68], y: 130}
@@ -3354,6 +3570,8 @@ architectures:
     papers:
       - {cite: Sohl-Dickstein et al. 2015, title: "Deep unsupervised learning using nonequilibrium thermodynamics", url: "https://arxiv.org/abs/1503.03585"}
       - {cite: "Ho, Jain & Abbeel 2020", title: "Denoising diffusion probabilistic models", url: "https://arxiv.org/abs/2006.11239"}
+    circle: sample
+    signature: {ring: [n], note: "one denoiser, used at every step"}
     diagram:
       rows:
         - {id: x, cell: [noise, noisy, noisy, output], xs: [84, 84, 84, 84], ys: [130, 91.3, 52.7, 14], marks: [true, false, false, true]}   # time runs bottom to top: noise to sample
@@ -3405,6 +3623,8 @@ architectures:
       - {cite: Rezende & Mohamed 2015, title: "Variational inference with normalizing flows", url: "https://arxiv.org/abs/1505.05770"}
       - {cite: "Dinh, Sohl-Dickstein & Bengio 2016", title: "Density estimation using Real NVP", url: "https://arxiv.org/abs/1605.08803"}
       - {cite: "Kingma & Dhariwal 2018", title: "Glow: Generative flow with invertible 1x1 convolutions", url: "https://arxiv.org/abs/1807.03039"}
+    circle: unit
+    signature: {styles: [link], cells: [b1, b2], note: "the coupling networks, each changing half the units from the other half"}
     diagram:
       say:   # a caption for each step of the step-through
         - "Sampling starts from noise: four random numbers."
@@ -3447,14 +3667,18 @@ architectures:
       The first pink layer reads each position and the one before it; the next reaches two back,
       and the outputs four, doubling at each layer. Nothing reads to the right, so each output
       predicts the next sample; like U-Net it is fully convolutional, one output per position
-      with no dense layer. Step through shows generation, one sample at a time.
+      with no dense layer. Each sample it generates is fed back in as the next input: the
+      arrowheads under every input but the first. Step through shows generation, one sample at a
+      time.
     papers:
       - {cite: van den Oord et al. 2016, title: "WaveNet: A generative model for raw audio", url: "https://arxiv.org/abs/1609.03499"}
       - {cite: "van den Oord, Kalchbrenner & Kavukcuoglu 2016", title: "Pixel recurrent neural networks", url: "https://arxiv.org/abs/1601.06759"}
       - {cite: "Bai, Kolter & Koltun 2018", title: "An empirical evaluation of generic convolutional and recurrent networks for sequence modeling", url: "https://arxiv.org/abs/1803.01271"}
+    circle: grid
+    signature: {cells: [[y, 5], [c2, 5], [c2, 1], [c1, 5], [c1, 3], [c1, 1], x], note: "one output's reach, doubling each layer"}
     diagram:
       rows:
-        - {id: x, cell: input, n: 6, pitch: 34}   # as wide as the panel allows: the edge cells' ticks reach its margin
+        - {id: x, cell: input, n: 6, pitch: 34, fed: [1, 2, 3, 4, 5]}   # as wide as the panel allows: the edge cells' ticks reach its margin; all but the first were outputs
         - {id: c1, cell: conv, n: 6, pitch: 34}
         - {id: c2, cell: conv, n: 6, pitch: 34}
         - {id: y, cell: output, n: 6, pitch: 34}   # the outputs are the last dilated layer, as in the paper's figure
@@ -3512,6 +3736,8 @@ architectures:
       - {cite: Lipman et al. 2022, title: "Flow matching for generative modeling", url: "https://arxiv.org/abs/2210.02747"}
       - {cite: "Liu, Gong & Liu 2022", title: "Flow straight and fast: Learning to generate and transfer data with rectified flow", url: "https://arxiv.org/abs/2209.03003"}
       - {cite: Esser et al. 2024, title: "Scaling rectified flow transformers for high-resolution image synthesis", url: "https://arxiv.org/abs/2403.03206"}
+    circle: sample
+    signature: {styles: [state], cells: [v], ring: [v], note: "each step's move along its velocity"}
     diagram:
       rows:
         - {id: x, cell: [noise, noisy, noisy, output], xs: [64, 64, 64, 64], ys: [130, 91.3, 52.7, 14], marks: [true, false, false, true]}   # time runs bottom to top: noise to sample
@@ -3582,6 +3808,8 @@ architectures:
       - {cite: Mnih et al. 2016, title: "Asynchronous methods for deep reinforcement learning", url: "https://arxiv.org/abs/1602.01783"}
       - {cite: Ouyang et al. 2022, title: "Training language models to follow instructions with human feedback", url: "https://arxiv.org/abs/2203.02155"}
       - {cite: Shao et al. 2024, title: "DeepSeekMath: Pushing the limits of mathematical reasoning in open language models", url: "https://arxiv.org/abs/2402.03300"}
+    circle: unit
+    signature: {styles: [loop], note: "the loop: act, then the environment answers"}
     diagram:
       say:   # a caption for each step of the step-through
         - "The state comes in: the cart's position and speed, the pole's angle and spin."
@@ -3624,18 +3852,21 @@ architectures:
       both; only the attention is drawn. The decoder's two rows are the two attention steps of
       one block: the lower is causal self-attention, and the dashed lines from the encoder into
       the upper are cross-attention, reading the encoder's output. The block's single
-      feed-forward layer follows cross-attention and isn't drawn. Step through shows
+      feed-forward layer follows cross-attention and isn't drawn. The arrowhead under the
+      decoder's second input marks a token it wrote, fed back in. Step through shows
       translation: the encoder reads the whole source at once, then the decoder writes one token
       at a time.
     papers:
       - {cite: Vaswani et al. 2017, title: "Attention is all you need", url: "https://arxiv.org/abs/1706.03762"}
     contains: [skip]   # each block's residual connections, not drawn
+    circle: seq
+    signature: {styles: [cross], note: "the attention reads, cross-attention included"}
     diagram:
       levels: 4
       rows:
         - {id: ex, cell: input, n: 3, xs: [16, 52, 88], level: 0}   # 36 apart within each stack, 56 between them, as in seq2seq
         - {id: ea, cell: attention, n: 3, xs: [16, 52, 88], y: 96, connect: full, from: ex, style: cross}
-        - {id: dx, cell: input, n: 2, xs: [144, 180], level: 0}
+        - {id: dx, cell: input, n: 2, xs: [144, 180], level: 0, fed: [1]}   # the second, the word it wrote
         - {id: da, cell: attention, n: 2, xs: [144, 180], y: 96, connect: causal, from: dx, style: cross}
         - {id: dc, cell: attention, n: 2, xs: [144, 180], level: 2, connect: one, from: da}
         - {id: dy, cell: output, n: 2, xs: [144, 180], level: 3, connect: one, from: dc}
@@ -3672,6 +3903,8 @@ architectures:
     papers:
       - {cite: Devlin et al. 2018, title: "BERT: Pre-training of deep bidirectional transformers for language understanding", url: "https://arxiv.org/abs/1810.04805"}
     contains: [skip]   # each block's residual connections, not drawn
+    circle: seq
+    signature: {styles: [cross], cells: [[r0, 2]], ring: [[r0, 2]], note: "the masked token, and the reads from it"}
     diagram:
       say:   # a caption for each step of the step-through
         - "A sentence with one word masked (dashed)."
@@ -3702,21 +3935,28 @@ architectures:
     read: >-
       Each pink cell reads only its own column and the ones to its left, so no token sees what
       comes after it. Every output predicts the token that follows its position, so one pass
-      trains on every position at once. Step through shows generation, one token at a time.
+      trains on every position at once. To generate, each output in turn is fed back in as the
+      next input: the arrowheads under the earlier inputs show where they came from, and the
+      arrow around the side shows the newest going into the next position, faded because it
+      hasn't run yet. Step through shows generation, one token at a time.
     papers:
       - {cite: Radford et al. 2018, title: "Improving language understanding by generative pre-training", url: "https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf"}
     contains: [skip]   # each block's residual connections, not drawn
+    circle: seq
+    signature: {styles: [loop], note: "each output fed back as the next input"}
     diagram:
-      rows:
-        - {id: x, cell: input, n: 4}
-        - {id: a1, cell: attention, n: 4, connect: causal, style: cross}
-        - {id: a2, cell: attention, n: 4, connect: causal, style: cross}
-        - {id: y, cell: output, n: 4, connect: one}
+      rows:   # three columns, 48 apart as BERT's, and a fourth input, faded: the next position, not yet run, where the newest output goes
+        - {id: x, cell: input, n: 4, xs: [32, 80, 128, 176], dim: [3], fed: [1, 2]}   # the second and third were outputs too
+        - {id: a1, cell: attention, n: 3, xs: [32, 80, 128], connect: causal, style: cross}
+        - {id: a2, cell: attention, n: 3, xs: [32, 80, 128], connect: causal, style: cross}
+        - {id: y, cell: output, n: 3, xs: [32, 80, 128], connect: one}
+      loops:   # the newest output fed back in as the next input
+        - {from: [y, 2], to: [x, 3], side: right, solid: true}
       flow:   # generating: one position at a time, each layer reading the layer below at every position so far
         - {to: [[x, 0], [a1, 0], [a2, 0], [y, 0]], within: true, say: "The first token goes in; attention can read only it, and the output predicts the second token."}
-        - {to: [[x, 1], [a1, 1], [a2, 1], [y, 1]], within: true, from: [[x, 0], [a1, 0]], say: "That prediction becomes the second input. Its column reads itself and the first, never anything to its right."}
-        - {to: [[x, 2], [a1, 2], [a2, 2], [y, 2]], within: true, from: [[x, 0], [x, 1], [a1, 0], [a1, 1]], say: "Each new token sees every one before it. Earlier positions aren't recomputed: their keys and values wait in the KV cache."}
-        - {to: [[x, 3], [a1, 3], [a2, 3], [y, 3]], within: true, from: [[x, 0], [x, 1], [x, 2], [a1, 0], [a1, 1], [a1, 2]], say: "And so on, one token at a time. In training every position runs at once, each predicting the token after it."}
+        - {to: [[x, 1], [a1, 1], [a2, 1], [y, 1]], within: true, from: [[x, 0], [a1, 0]], say: "That prediction becomes the second input (the arrowhead under it). Its column reads itself and the first, never anything to its right."}
+        - {to: [[x, 2], [a1, 2], [a2, 2], [y, 2]], within: true, from: [[x, 0], [x, 1], [a1, 0], [a1, 1]], say: "Each new token sees every one before it. Earlier positions aren't recomputed: their keys and values wait in the KV cache. In training every position runs at once, each predicting the token after it."}
+        - {to: [x, 3], from: [y, 2], say: "The newest prediction goes back in (the arrow) as the next input, and generation goes on until an end token."}
 
   vit:
     name: ViT
@@ -3741,6 +3981,8 @@ architectures:
       - {cite: Dosovitskiy et al. 2020, title: "An image is worth 16x16 words: Transformers for image recognition at scale", url: "https://arxiv.org/abs/2010.11929"}
       - {cite: Touvron et al. 2021, title: "Training data-efficient image transformers & distillation through attention", url: "https://arxiv.org/abs/2012.12877"}
     contains: [skip]   # each block's residual connections, not drawn
+    circle: "each square is an image patch, and each circle one patch's vector at one layer"
+    signature: {cells: [img, t], note: "the image cut into patches, each a token"}
     diagram:
       say:   # a caption for each step of the step-through
         - "An image, cut into patches."
@@ -3784,6 +4026,8 @@ architectures:
     papers:
       - {cite: Radford et al. 2021, title: "Learning transferable visual models from natural language supervision", url: "https://arxiv.org/abs/2103.00020"}
     contains: [skip]   # each block's residual connections, not drawn
+    circle: "each square is an image patch, and each circle one patch's or token's vector at one layer"
+    signature: {styles: [cross], cells: [ie, te], ring: [ie, te], note: "the image and caption embeddings, compared"}
     diagram:
       say:   # a caption for each step of the step-through
         - "An image's patches (left) and a caption's tokens (right) go into their encoders."
@@ -3842,6 +4086,8 @@ architectures:
       - {cite: Austin et al. 2021, title: "Structured denoising diffusion models in discrete state-spaces", url: "https://arxiv.org/abs/2107.03006"}
       - {cite: Sahoo et al. 2024, title: "Simple and effective masked diffusion language models", url: "https://arxiv.org/abs/2406.07524"}
     contains: [skip]   # each block's residual connections, not drawn
+    circle: seq
+    signature: {styles: [loop], note: "the whole result fed back in each pass"}
     diagram:
       say:   # a caption for each step of the step-through
         - "The text so far: some tokens known, the dashed ones still masked."
@@ -3890,6 +4136,8 @@ architectures:
       - {cite: Beck et al. 2024, title: "xLSTM: Extended long short-term memory", url: "https://arxiv.org/abs/2405.04517"}
       - {cite: "Yang, Kautz & Hatamizadeh 2024", title: "Gated delta networks: Improving Mamba2 with delta rule", url: "https://arxiv.org/abs/2412.06464"}
     contains: [skip]   # each block's residual connections, not drawn
+    circle: seq
+    signature: {cells: [r1], note: "the matrix state carried along"}
     diagram:
       say:   # a caption for each step of the step-through
         - "The first token arrives."
@@ -3929,6 +4177,8 @@ architectures:
     papers:
       - {cite: Gu & Dao 2023, title: "Mamba: Linear-time sequence modeling with selective state spaces", url: "https://arxiv.org/abs/2312.00752"}
     contains: [skip]   # each block's residual connections, not drawn
+    circle: seq
+    signature: {styles: [gate], note: "the gates, set by the input alone"}
     diagram:
       say:   # a caption for each step of the step-through
         - "The first input arrives."
@@ -3972,6 +4222,8 @@ architectures:
       matrix-valued state forward, and the gate dots show it deciding, from each input, how much
       of that state to keep. Step through shows a sequence moving up through the layers in a diagonal wave.
     contains: [skip]   # each block's residual connections, not drawn
+    circle: seq
+    signature: {styles: [cross], note: "the one attention layer"}
     diagram:
       say:   # a caption for each step of the step-through
         - "The first input arrives."
@@ -4019,6 +4271,8 @@ architectures:
       - {cite: Scarselli et al. 2009, title: "The graph neural network model", url: "https://doi.org/10.1109/TNN.2008.2005605"}
       - {cite: Kipf & Welling 2016, title: "Semi-supervised classification with graph convolutional networks", url: "https://arxiv.org/abs/1609.02907"}
       - {cite: Veličković et al. 2017, title: "Graph attention networks", url: "https://arxiv.org/abs/1710.10903"}
+    circle: node
+    signature: {styles: [state], note: "the messages pooled into a node"}
     diagram:
       rows:
         - {id: v, cell: [output, hidden, hidden, hidden, hidden, hidden, hidden],
@@ -4062,6 +4316,8 @@ architectures:
       - {cite: "Fedus, Zoph & Shazeer 2021", title: "Switch Transformers: Scaling to trillion parameter models with simple and efficient sparsity", url: "https://arxiv.org/abs/2101.03961"}
       - {cite: Jiang et al. 2024, title: "Mixtral of experts", url: "https://arxiv.org/abs/2401.04088"}
     contains: [skip]   # each block's residual connections, not drawn
+    circle: seq
+    signature: {cells: [r, e], note: "each token's route to its experts"}
     diagram:
       say:   # a caption for each step of the step-through
         - "Four tokens arrive."
@@ -4105,6 +4361,8 @@ architectures:
       capsule's vector, the probability that the class is present. Routing by agreement repeats
       the step into the class capsules, usually three times. Step through shows one pass, from
       the inputs to the class capsules.
+    circle: "each pink circle is one position's features, and each green one a capsule, whose output is a whole vector"
+    signature: {styles: [cross], note: "routing by agreement"}
     diagram:
       say:   # a caption for each step of the step-through
         - "An image, drawn as five inputs."
